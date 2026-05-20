@@ -1,4 +1,5 @@
 from web3 import HTTPProvider, Web3
+from web3.exceptions import BadFunctionCallOutput
 from decimal import Decimal
 from flask import current_app as app
 import time
@@ -293,15 +294,25 @@ class Coin:
                     raise Exception(f"There was exception during query to the database, try again later")
             break
         return Encryption.decrypt(pd.priv_key)
-        
 
     def get_dump(self):
         logger.warning('Start dumping wallets')
         all_wallets = {}
-        address_list = get_all_accounts()
-        for address in address_list:
-            all_wallets.update({address: {'public_address': address,
-                                          'secret': self.get_seed_from_address(address)}})
+        tries = 3
+        for i in range(tries):
+            try:
+                pd = Wallets.query.all()
+            except:
+                if i < tries - 1: # i is zero indexed
+                    db.session.rollback()
+                    continue
+                else:
+                    db.session.rollback()
+                    raise Exception(f"There was exception during query to the database, try again later")
+            break
+        for wallet in pd:
+            all_wallets.update({wallet.pub_address: {'public_address': wallet.pub_address,
+                                                     'secret': Encryption.decrypt(wallet.priv_key)}})
         return all_wallets
 
     def save_wallet_to_db(self, wallet):
@@ -522,9 +533,25 @@ class Token:
     
     def get_fee_deposit_token_balance(self):
         deposit_account = self.get_fee_deposit_account()
-        balance = Decimal(self.contract.functions.balanceOf(self.provider.to_checksum_address(deposit_account)).call())
-        normalized_balance = balance / Decimal(10** (self.contract.functions.decimals().call()))
-        return normalized_balance
+        code = self.provider.eth.get_code(self.contract_address)
+        if not code or code == b'\x00' or code.hex() in ('0x', '0x0'):
+            raise ValueError(
+                f'Token contract {self.contract_address} is not deployed on network '
+                f'{config["CURRENT_NETWORK"]} (check CURRENT_NETWORK / FULLNODE_URL)'
+            )
+        try:
+            balance = Decimal(
+                self.contract.functions.balanceOf(
+                    self.provider.to_checksum_address(deposit_account)
+                ).call()
+            )
+            decimals = self.contract.functions.decimals().call()
+        except BadFunctionCallOutput as exc:
+            raise ValueError(
+                f'Cannot read {self.symbol} balance: contract {self.contract_address} '
+                f'on network {config["CURRENT_NETWORK"]} — wrong address or node not synced'
+            ) from exc
+        return balance / Decimal(10 ** decimals)
     
     def make_token_multipayout(self, payout_list, fee,):
         payout_results = []

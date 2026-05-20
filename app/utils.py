@@ -1,18 +1,25 @@
-import logging
+# import logging
 from decimal import Decimal
-import time
-from typing import Literal
-import concurrent
-import requests as rq
+# import time
+# from typing import Literal
+# import concurrent
+# import requests as rq
 from functools import wraps
 
-from flask import current_app
+# from flask import current_app
 from werkzeug.routing import BaseConverter
-import requests
+# import requests
 
-from .config import config, get_contract_address
+# from .config import config, get_contract_address
 from .logging import logger
 
+
+def chain_head(w3) -> int:
+    """Return current chain head as int (safe after web3 batch_requests)."""
+    value = w3.eth.get_block_number()
+    if isinstance(value, tuple):
+        value = value[0]
+    return int(value)
 
 
 class DecimalConverter(BaseConverter):

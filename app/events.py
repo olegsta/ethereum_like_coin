@@ -1,188 +1,215 @@
 from collections import defaultdict
-import requests as rq
 import time
-import ahocorasick
 
+import requests as rq
 from web3 import Web3, HTTPProvider
 
-from .models import Settings, db, Wallets, Accounts
-from .config import config, get_contract_abi, get_contract_address
+from .models import Settings, db
+from .config import config
 from .logging import logger
 from .token import Token, get_all_accounts
+from .utils import chain_head
 
 
+# ---------------------------------------------------------------------------
+# Web3 client
+# ---------------------------------------------------------------------------
 
-w3 = Web3(HTTPProvider(config["FULLNODE_URL"], 
-                       request_kwargs={'timeout': int(config['FULLNODE_TIMEOUT'])}))
+w3 = Web3(
+    HTTPProvider(
+        config["FULLNODE_URL"],
+        request_kwargs={"timeout": int(config["FULLNODE_TIMEOUT"])},
+    )
+)
 
-def handle_event(transaction):        
-    logger.info(f'new transaction: {transaction!r}')
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def handle_event(tx) -> None:
+    logger.info(f"new transaction: {tx!r}")
 
 
-def walletnotify_shkeeper(symbol, txid) -> bool:
-    """Notify SHKeeper about transaction"""
-    logger.warning(f"Notifying about {symbol}/{txid}")
+def walletnotify_shkeeper(symbol: str, txid: str) -> bool:
+    """Notify SHKeeper about a transaction, retrying until success."""
+    logger.warning(f"Notify SHKeeper {symbol}/{txid}")
+
+    url = f'http://{config["SHKEEPER_HOST"]}/api/v1/walletnotify/{symbol}/{txid}'
+    headers = {"X-Shkeeper-Backend-Key": config["SHKEEPER_KEY"]}
+
     while True:
         try:
-            r = rq.post(
-                    f'http://{config["SHKEEPER_HOST"]}/api/v1/walletnotify/{symbol}/{txid}',
-                    headers={'X-Shkeeper-Backend-Key': config['SHKEEPER_KEY']}).json()
-            if r["status"] == "success":
-                logger.warning(f"The notification about {symbol}/{txid} was successful")
+            response = rq.post(url, headers=headers).json()
+
+            if response.get("status") == "success":
+                logger.warning(f"Notify success {symbol}/{txid}")
                 return True
-            else:
-                logger.warning(f"Failed to notify SHKeeper about {symbol}/{txid}, received response: {r}")
-                time.sleep(5)
-        except Exception as e:
-            logger.warning(f'Shkeeper notification failed for {symbol}/{txid}: {e}')
+
+            logger.warning(f"Notify failed: {response}")
+            time.sleep(5)
+
+        except Exception as exc:
+            logger.warning(f"Notify error {symbol}/{txid}: {exc}")
             time.sleep(10)
 
 
-def log_loop(last_checked_block, check_interval):
+def _should_drain(sender: str, recipient: str, accounts: set, ref_block: int) -> bool:
+    """Return True if the recipient account should be drained after this transfer."""
+    return (
+        sender not in accounts
+        and recipient in accounts
+        and (chain_head(w3) - ref_block) < 40
+    )
+
+
+# ---------------------------------------------------------------------------
+# Block processing
+# ---------------------------------------------------------------------------
+
+def process_block(block, accounts: set, last_batch_block: int) -> None:
+    # Avoid early circular imports in some environments
     from .tasks import drain_account
+
+    for tx in block.transactions:
+        tx_from = tx["from"]
+        tx_to   = tx["to"]
+
+        if tx_from not in accounts and tx_to not in accounts:
+            continue
+
+        handle_event(tx)
+        walletnotify_shkeeper(config["COIN_SYMBOL"], tx["hash"].hex())
+
+        if _should_drain(tx_from, tx_to, accounts, last_batch_block):
+            drain_account.delay(config["COIN_SYMBOL"], tx_to)
+
+
+def process_token_transfers(
+    token_names: list[str],
+    accounts: set,
+    start_block: int,
+    end_block: int,
+) -> None:
+    from .tasks import drain_account
+
+    for token_name in token_names:
+        token = Token(token_name)
+
+        for tx in token.get_all_transfers(start_block, end_block):
+            from_addr = token.provider.to_checksum_address(tx["from"])
+            to_addr   = token.provider.to_checksum_address(tx["to"])
+
+            if from_addr not in accounts and to_addr not in accounts:
+                continue
+
+            handle_event(tx)
+            walletnotify_shkeeper(token_name, tx["txid"])
+
+            if _should_drain(from_addr, to_addr, accounts, end_block):
+                drain_account.delay(token_name, to_addr)
+
+
+# ---------------------------------------------------------------------------
+# Persistence helpers
+# ---------------------------------------------------------------------------
+
+def _save_last_block(app, block_number: int) -> None:
+    settings = Settings.query.filter_by(name="last_block").first()
+    settings.value = str(block_number)
+    with app.app_context():
+        db.session.add(settings)
+        db.session.commit()
+
+
+def _init_last_block(app) -> None:
+    """Persist the current chain head as the starting checkpoint (once)."""
+    already_set = Settings.query.filter_by(name="last_block").first()
+    locked      = config["LAST_BLOCK_LOCKED"].lower() == "true"
+
+    if not already_set and not locked:
+        with app.app_context():
+            db.session.add(Settings(name="last_block", value=str(chain_head(w3))))
+            db.session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Main scanner loop
+# ---------------------------------------------------------------------------
+
+def log_loop(last_checked_block: int, check_interval: int) -> None:
     from app import create_app
+
     app = create_app()
     app.app_context().push()
 
-    token_addresses = []
+    token_names = list(config["TOKENS"][config["CURRENT_NETWORK"]].keys())
+    batch_size  = config["BLOCK_SCANNER_BATCH_SIZE"]
 
-    for token in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys():
-        token_addresses.append(config['TOKENS'][config["CURRENT_ARB_NETWORK"]][token]['contract_address'])
+    while True:
+        latest_block = chain_head(w3)
+        accounts     = set(get_all_accounts())
 
-    while True:       
-        
-        last_block =  w3.eth.block_number
-        if last_checked_block == '' or last_checked_block is None:
-            last_checked_block = last_block
+        if not last_checked_block:
+            last_checked_block = latest_block
 
-        if last_checked_block > last_block:
-            logger.exception(f'Last checked block {last_checked_block} is bigger than last block {last_block} in blockchain')
-        elif last_checked_block == last_block - 2:
-            pass
-        else:      
-            list_accounts = set(get_all_accounts()) 
-            for block_chunk in range((last_block - last_checked_block) // config['BLOCK_SCANNER_BATCH_SIZE']):
-                start_batch_block = last_checked_block + 1
-                last_batch_block = last_checked_block + config['BLOCK_SCANNER_BATCH_SIZE']
-                logger.warning(f"Checking blocks {start_batch_block} - {last_batch_block}") 
-                batch_time = time.time()
-                batch = w3.batch_requests()
-                for qq in range(config['BLOCK_SCANNER_BATCH_SIZE']):
-                    batch.add(w3.eth.get_block(start_batch_block + qq, True))
-                responses = batch.execute()
-                assert len(responses) == config['BLOCK_SCANNER_BATCH_SIZE']
-                batch_get_time = time.time()
-                logger.warning(f"Get batch results: {batch_get_time - batch_time}")
+        if last_checked_block > latest_block:
+            logger.warning(
+                "last_checked_block (%s) > chain head (%s) — skipping cycle",
+                last_checked_block,
+                latest_block,
+            )
+            time.sleep(check_interval)
+            continue
 
-#################### internal transaction detection part ####################
-                # account_fragments = {addr[2:].lower() for addr in list_accounts} # for internal transaction check
-    
-                # A = ahocorasick.Automaton()
-                # for idx, word in enumerate(account_fragments):
-                #     A.add_word(word, (idx, word))
-                # A.make_automaton()
-#################### internal transaction detection part ####################
+        # ── Scan blocks in batches ──────────────────────────────────────────
+        while last_checked_block < latest_block:
+            start = last_checked_block + 1
+            end   = min(last_checked_block + batch_size, latest_block)
 
-                for block in responses:  
-                    block_txs = []    
-                    block_internal_txs = []      
-                    for transaction in block.transactions:
-                        if transaction['to'] in list_accounts or transaction['from'] in list_accounts:
-                            handle_event(transaction)
-                            block_txs.append(transaction['to'].lower())
-                            block_txs.append(transaction['from'].lower())
-                            walletnotify_shkeeper(config["COIN_SYMBOL"], transaction['hash'].hex())
-                            if ((transaction['to'] in list_accounts and transaction['from']  not in list_accounts) and 
-                                ((w3.eth.block_number - last_batch_block) < 40)):
-                                drain_account.delay(config["COIN_SYMBOL"], transaction['to'])
-                
-                    classic_trx_time = time.time()
-                    logger.warning(f"Check classic transactions: {batch_get_time - classic_trx_time}")
+            logger.warning(f"Scanning blocks {start} – {end}")
 
-                for token in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys():
-                    token_instance  = Token(token)
-                    transfers = token_instance.get_all_transfers(start_batch_block, last_batch_block)
-                    for transaction in transfers:
+            with w3.batch_requests() as batch:
+                for block_num in range(start, end + 1):
+                    batch.add(w3.eth.get_block(block_num, True))
 
-                        if (token_instance.provider.to_checksum_address(transaction['from']) in list_accounts or 
-                            token_instance.provider.to_checksum_address(transaction['to']) in list_accounts):
-                            handle_event(transaction)
-                            walletnotify_shkeeper(token, transaction['txid'])
-                            if ((token_instance.provider.to_checksum_address(transaction['from']) not in list_accounts and 
-                                token_instance.provider.to_checksum_address(transaction['to']) in list_accounts) and 
-                                ((w3.eth.block_number - last_batch_block) < 40)):
-                                drain_account.delay(token, token_instance.provider.to_checksum_address(transaction['to']))
-                logger.warning(f"Check token transactions: {classic_trx_time - time.time()}")
+                for block in batch.execute():
+                    process_block(block, accounts, end)
 
-#################### internal transaction detection part ####################
-                    # start_t = time.time()
+            process_token_transfers(token_names, accounts, start, end)
 
-                    # for transaction in block.transactions:
-                    #     if ((len(transaction.input) > 6) and # check only transactions with input (regular ARB transactions input is '0x')
-                    #         (transaction['to'] not in token_addresses)): # do not check internal transactions to known token addresses
-                    #         print(transaction)
-                    #         for end_index, (idx, found_address) in A.iter(transaction.input.hex()):
-                    #             logger.warning(f"Found internal transaction {transaction['hash'].hex()} to our address 0x{found_address}")
-                    #             if (str('0x'+found_address) not in block_txs): # check if a regular ARB tx was in this block to this address  
-                    #                 if (str('0x'+found_address) not in block_internal_txs):  # check if an internal tx to this address was in this block 
-                    #                     block_internal_txs.append(str('0x'+found_address)) 
-                    #                     walletnotify_shkeeper('ARB', transaction['hash'].hex())
-                    #                     break # need only 1 notify to get all internal txs to our addresses
-                    #                 else:
-                    #                     logger.warning(f"There was already an internal transaction to 0x{found_address} in {block.blockNumber} block, skip notification")
-                    #             else:
-                    #                 logger.warning(f"There was already a regular ARB transaction to 0x{found_address} in {block.blockNumber} block, skip notification")
+            last_checked_block = end
+            _save_last_block(app, end)
 
-
-                    # finish_t = time.time()
-
-                    # logger.warning(f"internal transaction check time {finish_t - start_t}")
-
-#################### internal transaction detection part ####################
-
-                last_checked_block = last_batch_block
-                pd = Settings.query.filter_by(name = "last_block").first()
-                pd.value = last_batch_block
-                with app.app_context():
-                    db.session.add(pd)
-                    db.session.commit()
-                    db.session.close()
         time.sleep(check_interval)
 
-def events_listener():
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def events_listener() -> None:
     from app import create_app
+
     app = create_app()
     app.app_context().push()
 
-    enough_accounts = False
-    while not enough_accounts:
-        list_accounts_ = set(get_all_accounts()) 
-        if len(list_accounts_)==0:
-            logger.warning("At least 1 account should be created to start scannnig")
-            time.sleep(60)
-        else:
-            enough_accounts = True
-
-    if (not Settings.query.filter_by(name = "last_block").first()) and (config['LAST_BLOCK_LOCKED'].lower() != 'true'):
-        logger.warning(f"Changing last_block to a last block on a fullnode, because cannot get it in DB")
-        with app.app_context():
-            db.session.add(Settings(name = "last_block", 
-                                         value = w3.eth.block_number))
-            db.session.commit()
-            db.session.close() 
-            db.session.remove()
-            db.engine.dispose()
-    
     while True:
+        accounts = set(get_all_accounts())
+
+        if not accounts:
+            logger.warning("No accounts yet — waiting 60 s...")
+            time.sleep(60)
+            continue
+
+        _init_last_block(app)
+
         try:
-            pd = Settings.query.filter_by(name = "last_block").first()
-            last_checked_block = int(pd.value)
-            log_loop(last_checked_block, int(config["CHECK_NEW_BLOCK_EVERY_SECONDS"]))
-        except Exception as e:
-            sleep_sec = 60
-            logger.exception(f"Exception in main block scanner loop: {e}")
-            logger.warning(f"Waiting {sleep_sec} seconds before retry.")           
-            time.sleep(sleep_sec)
-
-
+            last_block = Settings.query.filter_by(name="last_block").first()
+            log_loop(
+                int(last_block.value),
+                int(config["CHECK_NEW_BLOCK_EVERY_SECONDS"]),
+            )
+        except Exception as exc:
+            logger.exception(f"Scanner crashed: {exc}")
+            time.sleep(60)

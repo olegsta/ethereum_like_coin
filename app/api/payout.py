@@ -22,7 +22,7 @@ def calc_tx_fee(amount):
         return {'accounts_num': 1,
                 'fee': float(fee)}
 
-    elif g.symbol in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys():
+    elif g.symbol in config['TOKENS'][config["CURRENT_NETWORK"]].keys():
         token_instance = Token(g.symbol)
         need_crypto = token_instance.get_coin_transaction_fee()       
         return {
@@ -65,7 +65,7 @@ def multipayout():
     if g.symbol == config["COIN_SYMBOL"]:
         task = (make_multipayout.s(g.symbol, payout_list, max_fee)).apply_async()
         return{'task_id': task.id}
-    elif  g.symbol in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys(): 
+    elif  g.symbol in config['TOKENS'][config["CURRENT_NETWORK"]].keys(): 
         task = ( make_multipayout.s(g.symbol, payout_list, max_fee)).apply_async()
         return {'task_id': task.id}
     else:
@@ -82,7 +82,7 @@ def payout(to, amount):
         payout_list = [{ "dest": to, "amount": amount }]
         task = (make_multipayout.s(g.symbol, payout_list, max_fee)).apply_async()        
         return {'task_id': task.id}
-    elif  g.symbol in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys():
+    elif  g.symbol in config['TOKENS'][config["CURRENT_NETWORK"]].keys():
         task = (make_multipayout.s(g.symbol, payout_list, max_fee)).apply_async()
         return {'task_id': task.id}
     else:

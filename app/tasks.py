@@ -12,7 +12,7 @@ from celery.utils.log import get_task_logger
 import requests as rq
 
 from . import celery
-from .config import config, get_min_token_transfer_threshold
+from .config import COIN, config, get_min_token_transfer_threshold
 from .models import Accounts, db
 from .encryption import Encryption
 from .token import Token, Coin, get_all_accounts
@@ -26,12 +26,12 @@ w3 = Web3(HTTPProvider(config["FULLNODE_URL"],
 
 @celery.task()
 def make_multipayout(symbol, payout_list, fee):
-    if symbol == config["COIN_SYMBOL"]:
+    if symbol == COIN:
         coint_inst = Coin(symbol)
         payout_results = coint_inst.make_multipayout_eth(payout_list, fee)
         post_payout_results.delay(payout_results, symbol)
         return payout_results    
-    elif symbol in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys():
+    elif symbol in config['TOKENS'][config["CURRENT_NETWORK"]].keys():
         token_inst = Token(symbol)
         payout_results = token_inst.make_token_multipayout(payout_list, fee)
         post_payout_results.delay(payout_results, symbol)
@@ -73,8 +73,8 @@ def refresh_balances():
                 raise Exception(f"There was exception during query to the database, try again later")
 
             acc_balance = decimal.Decimal(w3.from_wei(w3.eth.get_balance(account), "ether"))
-            if Accounts.query.filter_by(address = account, crypto = config["COIN_SYMBOL"]).first():
-                pd = Accounts.query.filter_by(address = account, crypto = config["COIN_SYMBOL"]).first()            
+            if Accounts.query.filter_by(address=account, crypto=COIN).first():
+                pd = Accounts.query.filter_by(address=account, crypto=COIN).first()
                 pd.amount = decimal.Decimal(w3.from_wei(w3.eth.get_balance(account), "ether"))                     
                 with app.app_context():
                     db.session.add(pd)
@@ -83,7 +83,7 @@ def refresh_balances():
             
             have_tokens = False
                 
-            for token in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys():
+            for token in config['TOKENS'][config["CURRENT_NETWORK"]].keys():
                 token_instance = Token(token)
                 if Accounts.query.filter_by(address = account, crypto = token).first():
                     pd = Accounts.query.filter_by(address = account, crypto = token).first()
@@ -98,11 +98,11 @@ def refresh_balances():
                     if normalized_balance >= decimal.Decimal(get_min_token_transfer_threshold(token)):
                         have_tokens = copy.deepcopy(token)
                     
-            if have_tokens in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys():
+            if have_tokens in config['TOKENS'][config["CURRENT_NETWORK"]].keys():
                 drain_account.delay(have_tokens, account) 
             else:
                 if acc_balance >= decimal.Decimal(config['MIN_TRANSFER_THRESHOLD']):
-                    drain_account.delay(config["COIN_SYMBOL"], account)        
+                    drain_account.delay(COIN, account)
     
             updated = updated + 1                
     
@@ -122,11 +122,11 @@ def refresh_balances():
 def drain_account(self, symbol, account):
     logger.warning(f"Start draining from account {account} crypto {symbol}")
     # return False
-    if symbol == config["COIN_SYMBOL"]:
+    if symbol == COIN:
         inst = Coin(symbol)
         destination = inst.get_fee_deposit_account()
         results = inst.drain_account(account, destination)
-    elif symbol in config['TOKENS'][config["CURRENT_ARB_NETWORK"]].keys():
+    elif symbol in config['TOKENS'][config["CURRENT_NETWORK"]].keys():
         inst = Token(symbol)
         destination = inst.get_fee_deposit_account()
         results = inst.drain_tocken_account(account, destination)
@@ -139,11 +139,11 @@ def drain_account(self, symbol, account):
 @celery.task(bind=True)
 @skip_if_running
 def create_fee_deposit_account(self):
-    logger.warning(f"Creating fee-deposit account")
-    inst = Coin("ARB")
-    inst.set_fee_deposit_account()    
+    logger.warning('Creating fee-deposit account')
+    inst = Coin(COIN)
+    inst.set_fee_deposit_account()
     return True
-        
+
 
 
 @celery.on_after_configure.connect
