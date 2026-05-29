@@ -9,14 +9,13 @@ FULLNODE_URL = 'http://arbitrum:8545'
 ENV = {
     'network': (
         'CURRENT_ARB_NETWORK',
-        'ARBETH_NETWORK',
         'ARB_NETWORK',
         'COIN_NETWORK',
         'CURRENT_NETWORK',
     ),
     'network_default': 'sepolia',
-    'username': ('ARBETH_USERNAME', 'ARB_USERNAME'),
-    'password': ('ARBETH_PASSWORD', 'ARB_PASSWORD'),
+    'username': ('ARB_USERNAME',),
+    'password': ('ARB_PASSWORD',),
 }
 
 DEFAULTS = {

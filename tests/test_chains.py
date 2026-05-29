@@ -1,9 +1,16 @@
 from app.chains import CHAINS, SUPPORTED_COINS, WALLET_ALIASES
-from app.chains import arbitrum, ethereum
+from app.chains import arbitrum, avalanche, ethereum
 
 
 def test_supported_coins():
-    assert SUPPORTED_COINS == ('ETH', 'ARBETH')
+    assert SUPPORTED_COINS == (
+        'ETH',
+        'ARBETH',
+        'OPETH',
+        'BNB',
+        'MATIC',
+        'AVAX',
+    )
 
 
 def test_wallet_alias_maps_arb_to_arbeth():
@@ -39,3 +46,19 @@ def test_ethereum_sepolia_has_usdt_token():
 
 def test_arbitrum_sepolia_has_usdc_token():
     assert 'ARB-USDC' in arbitrum.TOKENS['sepolia']
+
+
+def test_avalanche_chain_defaults():
+    assert avalanche.COIN == 'AVAX'
+    assert avalanche.DB_NAME == 'avalanche-shkeeper'
+    assert avalanche.FULLNODE_URL == 'http://avalanche:9650/ext/bc/C/rpc'
+    assert avalanche.USE_POA_MIDDLEWARE is True
+    assert avalanche.WALLET_ALIASES == ('AVALANCHE',)
+
+
+def test_wallet_alias_maps_avalanche_to_avax():
+    assert WALLET_ALIASES['AVALANCHE'] == 'AVAX'
+
+
+def test_avalanche_mainnet_has_usdt_token():
+    assert 'AVALANCHE-USDT' in avalanche.TOKENS['main']

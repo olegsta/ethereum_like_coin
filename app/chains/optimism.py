@@ -10,13 +10,12 @@ ENV = {
     'network': (
         'CURRENT_OP_NETWORK',
         'OP_NETWORK',
-        'OPETH_NETWORK',
         'COIN_NETWORK',
         'CURRENT_NETWORK',
     ),
     'network_default': 'sepolia',
-    'username': ('OPETH_USERNAME', 'OP_USERNAME'),
-    'password': ('OPETH_PASSWORD', 'OP_PASSWORD'),
+    'username': ('OP_USERNAME',),
+    'password': ('OP_PASSWORD',),
 }
 
 L1_GAS_PRICE_ORACLE = '0x420000000000000000000000000000000000000F'
