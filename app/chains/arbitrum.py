@@ -1,34 +1,34 @@
-COIN = 'ARBETH'
-WALLET_ALIASES = ('ARB',)
+# flake8: noqa: E501
+COIN = "ARBETH"
+WALLET_ALIASES = ("ARB",)
 
-DB_NAME = 'arbitrum-shkeeper'
+DB_NAME = "arbitrum-shkeeper"
 # testnet
 # FULLNODE_URL = 'https://sepolia-rollup.arbitrum.io/rpc''
-FULLNODE_URL = 'http://arbitrum:8545'
+FULLNODE_URL = "http://arbitrum:8545"
 
 ENV = {
-    'network': (
-        'CURRENT_ARB_NETWORK',
-        'ARB_NETWORK',
-        'COIN_NETWORK',
-        'CURRENT_NETWORK',
+    "network": (
+        "CURRENT_ARB_NETWORK",
+        "ARB_NETWORK",
+        "COIN_NETWORK",
+        "CURRENT_NETWORK",
     ),
-    'network_default': 'sepolia',
-    'username': ('ARB_USERNAME',),
-    'password': ('ARB_PASSWORD',),
+    "network_default": "sepolia",
+    "username": ("ARB_USERNAME",),
+    "password": ("ARB_PASSWORD",),
 }
 
 DEFAULTS = {
-    'MAX_PRIORITY_FEE': '0.00000000002',
-    'SLEEP_AFTER_SEEDING': 20,
-    'BLOCK_SCANNER_BATCH_SIZE': 12,
-    'ENABLE_INTERNAL_TX_SCAN': False,
-    'ENABLE_GETH_METRICS': False,
-    'ETHEREUM_HOST': 'ethereum',
-    'UNLOCK_ACCOUNT_TIME': '60',
+    "MAX_PRIORITY_FEE": "0.00000000002",
+    "SLEEP_AFTER_SEEDING": 20,
+    "BLOCK_SCANNER_BATCH_SIZE": 12,
+    "ENABLE_INTERNAL_TX_SCAN": False,
+    "ENABLE_GETH_METRICS": False,
+    "ETHEREUM_HOST": "ethereum",
+    "UNLOCK_ACCOUNT_TIME": "60",
 }
 
-# Auto-extracted token registry
 TOKENS = {
     "main": {
         "ARB-USDC": {
