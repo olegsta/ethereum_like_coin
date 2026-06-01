@@ -1,5 +1,6 @@
 # import logging
 from decimal import Decimal
+
 # import time
 # from typing import Literal
 # import concurrent
@@ -8,6 +9,7 @@ from functools import wraps
 
 # from flask import current_app
 from werkzeug.routing import BaseConverter
+
 # import requests
 
 # from .config import config, get_contract_address
@@ -28,13 +30,13 @@ def tx_input_hex(transaction) -> str:
     Handles both web3 v5 (str) and v6+ (HexBytes) input formats.
     """
     if isinstance(transaction, dict):
-        tx_input = transaction.get('input')
+        tx_input = transaction.get("input")
     else:
-        tx_input = getattr(transaction, 'input', None)
+        tx_input = getattr(transaction, "input", None)
     if not tx_input:
-        return ''
+        return ""
     if isinstance(tx_input, str):
-        return tx_input[2:].lower() if tx_input.startswith('0x') else tx_input.lower()
+        return tx_input[2:].lower() if tx_input.startswith("0x") else tx_input.lower()
     return tx_input.hex().lower()
 
 
@@ -48,7 +50,7 @@ class DecimalConverter(BaseConverter):
 
 
 def skip_if_running(f):
-    task_name = f'{f.__module__}.{f.__name__}'
+    task_name = f"{f.__module__}.{f.__name__}"
 
     @wraps(f)
     def wrapped(self, *args, **kwargs):
@@ -56,14 +58,18 @@ def skip_if_running(f):
 
         for worker, tasks in workers.items():
             for task in tasks:
-                if (task_name == task['name'] and
-                        tuple(args) == tuple(task['args']) and
-                        kwargs == task['kwargs'] and
-                        self.request.id != task['id']):
-                    logger.debug(f'task {task_name} ({args}, {kwargs}) is running on {worker}, skipping')
+                if (
+                    task_name == task["name"]
+                    and tuple(args) == tuple(task["args"])
+                    and kwargs == task["kwargs"]
+                    and self.request.id != task["id"]
+                ):
+                    logger.debug(
+                        f"task {task_name} ({args}, {kwargs}) is running on {worker}, skipping"
+                    )
 
                     return None
-        logger.debug(f'task {task_name} ({args}, {kwargs}) is allowed to run')
+        logger.debug(f"task {task_name} ({args}, {kwargs}) is allowed to run")
         return f(self, *args, **kwargs)
 
     return wrapped
