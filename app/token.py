@@ -39,7 +39,6 @@ _L1_FEE_ABI = [
 
 
 def _get_l1_fee(provider, tx_data=b""):
-    """Return L1 data fee in ether for OP Stack chains, or 0 for others."""
     oracle_addr = config.get("L1_GAS_PRICE_ORACLE")
     if not oracle_addr:
         return Decimal(0)
@@ -114,13 +113,12 @@ class Coin:
         multiplier = Decimal(
             config["MULTIPLIER"]
         )  # make max fee per gas as *MULTIPLIER of base price + fee
-        # add to need_crypto gas which need for sending crypto to tokken acc
         max_fee_per_gas = self.provider.from_wei(gas_price, "ether") + Decimal(fee)
         eth_transaction = {
             "from": self.provider.to_checksum_address(self.get_fee_deposit_account()),
             "to": self.provider.to_checksum_address(self.get_fee_deposit_account()),
             "value": self.provider.to_wei(0, "ether"),
-        }  # transaction example for counting gas
+        }
 
         payout_multiplier = Decimal(config["PAYOUT_MULTIPLIER"])
         eth_gas_count = self.provider.eth.estimate_gas(eth_transaction)
@@ -246,7 +244,7 @@ class Coin:
             "from": self.provider.to_checksum_address(self.get_fee_deposit_account()),
             "to": self.provider.to_checksum_address(payout_list[0]["dest"]),
             "value": self.provider.to_wei(max_payout_amount, "ether"),
-        }  # transaction example for counting gas
+        }
         payout_multiplier = Decimal(config["PAYOUT_MULTIPLIER"])
         gas_count = self.provider.eth.estimate_gas(transaction)
         gas_count = int(gas_count * payout_multiplier)

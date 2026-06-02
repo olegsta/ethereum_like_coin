@@ -11,9 +11,6 @@ from .utils import chain_head, tx_input_hex
 w3 = make_provider()
 
 
-# ── helpers ──────────────────────────────────────────────────────────────
-
-
 def _network_key() -> str:
     return config["CURRENT_NETWORK"]
 
@@ -63,12 +60,8 @@ def _should_drain(sender: str, recipient: str, accounts: set, ref_block: int) ->
     )
 
 
-# ── per-block processors ────────────────────────────────────────────────
-
-
 def process_block(block, accounts: set, last_batch_block: int) -> list[str]:
-    """Process regular native-coin transactions. Returns list of involved
-    addresses (lowercase) for use by internal tx dedup."""
+    """Process native coin transactions (ETH or chain coin)."""
     from .tasks import drain_account
 
     block_txs = []
@@ -80,11 +73,19 @@ def process_block(block, accounts: set, last_batch_block: int) -> list[str]:
         if tx_to is None:
             continue
 
+        is_incoming = tx_to in accounts and tx_from not in accounts
+
         if tx_from in accounts or tx_to in accounts:
             handle_event(transaction)
+
             block_txs.append(tx_to.lower())
             block_txs.append(tx_from.lower())
-            walletnotify_shkeeper(config["COIN_SYMBOL"], transaction["hash"].hex())
+
+            if is_incoming:
+                walletnotify_shkeeper(
+                    config["COIN_SYMBOL"],
+                    transaction["hash"].hex(),
+                )
 
             if _should_drain(tx_from, tx_to, accounts, last_batch_block):
                 drain_account.delay(config["COIN_SYMBOL"], tx_to)
@@ -98,11 +99,7 @@ def process_internal_transactions(
     token_addresses: list[str],
     block_txs: list[str],
 ) -> None:
-    """Detect ETH transfers to our addresses embedded in contract call input.
-
-    Uses Aho-Corasick automaton to find address fragments in calldata.
-    Skips transactions sent to known token contracts.
-    """
+    """Detect internal ETH transfers inside contract input data."""
     if not config.get("ENABLE_INTERNAL_TX_SCAN"):
         return
 
@@ -117,9 +114,7 @@ def process_internal_transactions(
 
     token_addrs_lower = {addr.lower() for addr in token_addresses}
 
-    transactions = (
-        block["transactions"] if isinstance(block, dict) else block.transactions
-    )
+    transactions = block["transactions"] if isinstance(block, dict) else block.transactions
     block_number = block["number"] if isinstance(block, dict) else block.number
 
     block_internal_txs = []
@@ -128,6 +123,7 @@ def process_internal_transactions(
         tx_to = transaction.get("to")
         if tx_to is None:
             continue
+
         if tx_to.lower() in token_addrs_lower:
             continue
 
@@ -141,7 +137,7 @@ def process_internal_transactions(
 
             if address_lower in block_txs:
                 logger.warning(
-                    "There was already a regular %s transaction to %s in block %s, skip notification",
+                    "There was already a regular %s tx to %s in block %s",
                     config["COIN_SYMBOL"],
                     full_address,
                     block_number,
@@ -150,19 +146,22 @@ def process_internal_transactions(
 
             if address_lower in block_internal_txs:
                 logger.warning(
-                    "There was already an internal transaction to %s in block %s, skip notification",
+                    "Duplicate internal tx to %s in block %s skipped",
                     full_address,
                     block_number,
                 )
                 continue
 
             logger.warning(
-                "Found internal transaction %s to our address %s",
+                "Found internal tx %s to %s",
                 transaction["hash"].hex(),
                 full_address,
             )
             block_internal_txs.append(address_lower)
-            walletnotify_shkeeper(config["COIN_SYMBOL"], transaction["hash"].hex())
+            walletnotify_shkeeper(
+                config["COIN_SYMBOL"],
+                transaction["hash"].hex(),
+            )
             break
 
 
@@ -182,22 +181,23 @@ def process_token_transfers(
             from_addr = token_instance.provider.to_checksum_address(transaction["from"])
             to_addr = token_instance.provider.to_checksum_address(transaction["to"])
 
+            is_incoming = from_addr not in accounts and to_addr in accounts
+
             if from_addr not in accounts and to_addr not in accounts:
                 continue
 
             handle_event(transaction)
-            walletnotify_shkeeper(token_name, transaction["txid"])
+            if is_incoming:
+                walletnotify_shkeeper(token_name, transaction["txid"])
 
             if _should_drain(from_addr, to_addr, accounts, end_block):
                 drain_account.delay(token_name, to_addr)
 
 
-# ── DB persistence ──────────────────────────────────────────────────────
-
-
 def _save_last_block(app, block_number: int) -> None:
     settings = Settings.query.filter_by(name="last_block").first()
     settings.value = str(block_number)
+
     with app.app_context():
         db.session.add(settings)
         db.session.commit()
@@ -205,13 +205,13 @@ def _save_last_block(app, block_number: int) -> None:
 
 
 def _init_last_block(app) -> None:
-    """Persist chain head as starting checkpoint when DB has no last_block."""
     already_set = Settings.query.filter_by(name="last_block").first()
     locked = config["LAST_BLOCK_LOCKED"].lower() == "true"
 
     if not already_set and not locked:
         head = chain_head(w3)
         logger.warning("Setting last_block to chain head %s (not in DB)", head)
+
         with app.app_context():
             db.session.add(Settings(name="last_block", value=str(head)))
             db.session.commit()
@@ -221,7 +221,6 @@ def _init_last_block(app) -> None:
 
 
 # ── main scan loop ───────────────────────────────────────────────────────
-
 
 def log_loop(last_checked_block: int, check_interval: int) -> None:
     from app import create_app
@@ -238,6 +237,7 @@ def log_loop(last_checked_block: int, check_interval: int) -> None:
     while True:
         latest_block = chain_head(w3)
         target_block = max(0, latest_block - scan_lag)
+
         accounts = set(get_all_accounts())
 
         if last_checked_block > latest_block:
@@ -263,7 +263,7 @@ def log_loop(last_checked_block: int, check_interval: int) -> None:
             start = last_checked_block + 1
             end = min(last_checked_block + batch_size, target_block)
 
-            logger.warning("Scanning blocks %s – %s", start, end)
+            logger.warning("Scanning blocks %s - %s", start, end)
 
             with w3.batch_requests() as batch:
                 for block_num in range(start, end + 1):
@@ -287,7 +287,6 @@ def log_loop(last_checked_block: int, check_interval: int) -> None:
 
 
 # ── entry point ──────────────────────────────────────────────────────────
-
 
 def events_listener() -> None:
     from app import create_app
