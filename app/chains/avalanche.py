@@ -4,8 +4,8 @@ WALLET_ALIASES = ("AVALANCHE",)
 
 DB_NAME = "avalanche-shkeeper"
 # testnet
-# FULLNODE_URL = 'https://api.avax-test.network/ext/bc/C/rpc'
-FULLNODE_URL = "http://avalanche:9650/ext/bc/C/rpc"
+FULLNODE_URL = 'https://api.avax-test.network/ext/bc/C/rpc'
+# FULLNODE_URL = "http://avalanche:9650/ext/bc/C/rpc"
 
 USE_POA_MIDDLEWARE = True
 

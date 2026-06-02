@@ -94,7 +94,7 @@ config = {
     ),
     "ACCOUNT_PASSWORD": os.environ.get("ACCOUNT_PASSWORD", "shkeeper"),
     "REDIS_HOST": os.environ.get("REDIS_HOST", "localhost"),
-    "LAST_BLOCK_LOCKED": os.environ.get("LAST_BLOCK_LOCKED", "True"),
+    "LAST_BLOCK_LOCKED": os.environ.get("LAST_BLOCK_LOCKED", "False"),
     "MIN_TRANSFER_THRESHOLD": Decimal(
         os.environ.get("MIN_TRANSFER_THRESHOLD", "0.001")
     ),

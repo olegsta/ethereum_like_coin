@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [united_with_ltc]
+    branches: [united_with_eth_test]
 
 jobs:
   build:
@@ -23,4 +23,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: olegprin/ethereum_like_coin:1.0.1
+          tags: olegprin/ethereum_like_coin:1.0.26

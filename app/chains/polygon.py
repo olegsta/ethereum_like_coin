@@ -4,8 +4,8 @@ WALLET_ALIASES = ("POLYGON",)
 
 DB_NAME = "polygon-shkeeper"
 # testnet
-# FULLNODE_URL = 'https://rpc-amoy.polygon.technology/'
-FULLNODE_URL = "http://polygon:8545"
+FULLNODE_URL = 'https://rpc-amoy.polygon.technology/'
+# FULLNODE_URL = "http://polygon:8545"
 
 USE_POA_MIDDLEWARE = True
 

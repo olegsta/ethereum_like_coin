@@ -4,8 +4,8 @@ WALLET_ALIASES = ()
 
 DB_NAME = "bnb-shkeeper"
 # testnet
-# FULLNODE_URL = 'https://bsc-testnet-rpc.publicnode.com'
-FULLNODE_URL = "http://bnb:8545"
+FULLNODE_URL = 'https://bsc-testnet-rpc.publicnode.com'
+# FULLNODE_URL = "http://bnb:8545"
 
 USE_POA_MIDDLEWARE = True
 

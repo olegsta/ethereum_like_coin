@@ -85,6 +85,31 @@ def get_status():
 
 @api.post("/transaction/<txid>")
 def get_transaction(txid):
+    def _resolve_direction(tx_from, tx_to, known_accounts, provider=None):
+        if provider:
+            from_addr = (
+                provider.to_checksum_address(tx_from)
+                if tx_from else None
+            )
+            to_addr = (
+                provider.to_checksum_address(tx_to)
+                if tx_to else None
+            )
+        else:
+            from_addr = tx_from
+            to_addr = tx_to
+
+        from_known = from_addr in known_accounts
+        to_known = to_addr in known_accounts
+
+        if from_known and to_known:
+            return from_addr, "internal"
+        if to_known:
+            return to_addr, "receive"
+        if from_known:
+            return from_addr, "send"
+        return None, None
+
     related_transactions = []
 
     list_accounts = get_all_accounts()
@@ -93,23 +118,13 @@ def get_transaction(txid):
         try:
             transaction = w3.eth.get_transaction(txid)
             logger.warning(f"Checking transaction {txid}")
-            if (transaction["to"] in list_accounts) or (
-                transaction["from"] in list_accounts
-            ):
+            address, category = _resolve_direction(
+                transaction["from"], transaction["to"], list_accounts
+            )
+            if category:
                 logger.warning(
                     f"Found related addresses in {txid}, checking it as a regular {coin_symbol} transaction"
                 )
-                if (transaction["to"] in list_accounts) and (
-                    transaction["from"] in list_accounts
-                ):
-                    address = transaction["from"]
-                    category = "internal"
-                elif transaction["to"] in list_accounts:
-                    address = transaction["to"]
-                    category = "receive"
-                elif transaction["from"] in list_accounts:
-                    address = transaction["from"]
-                    category = "send"
                 amount = w3.from_wei(transaction["value"], "ether")
                 confirmations = int(w3.eth.block_number) - int(
                     transaction["blockNumber"]
@@ -234,62 +249,22 @@ def get_transaction(txid):
                 return {"status": "error", "msg": "txid is not found for this crypto "}
             logger.warning(transactions_array)
 
+            token_decimals = token_instance.contract.functions.decimals().call()
             for transaction in transactions_array:
-                if (
-                    token_instance.provider.to_checksum_address(transaction["to"])
-                    in list_accounts
-                ) and (
-                    token_instance.provider.to_checksum_address(transaction["from"])
-                    in list_accounts
-                ):
-                    address = token_instance.provider.to_checksum_address(
-                        transaction["from"]
-                    )
-                    category = "internal"
-                    amount = Decimal(transaction["amount"]) / Decimal(
-                        10 ** (token_instance.contract.functions.decimals().call())
-                    )
-                    confirmations = int(w3.eth.block_number) - int(
-                        transaction["block_number"]
-                    )
-                    related_transactions.append(
-                        [address, amount, confirmations, category]
-                    )
+                address, category = _resolve_direction(
+                    transaction["from"],
+                    transaction["to"],
+                    list_accounts,
+                    provider=token_instance.provider,
+                )
+                if not category:
+                    continue
 
-                elif (
-                    token_instance.provider.to_checksum_address(transaction["to"])
-                    in list_accounts
-                ):
-                    address = token_instance.provider.to_checksum_address(
-                        transaction["to"]
-                    )
-                    category = "receive"
-                    amount = Decimal(transaction["amount"]) / Decimal(
-                        10 ** (token_instance.contract.functions.decimals().call())
-                    )
-                    confirmations = int(w3.eth.block_number) - int(
-                        transaction["block_number"]
-                    )
-                    related_transactions.append(
-                        [address, amount, confirmations, category]
-                    )
-                elif (
-                    token_instance.provider.to_checksum_address(transaction["from"])
-                    in list_accounts
-                ):
-                    address = token_instance.provider.to_checksum_address(
-                        transaction["from"]
-                    )
-                    category = "send"
-                    amount = Decimal(transaction["amount"]) / Decimal(
-                        10 ** (token_instance.contract.functions.decimals().call())
-                    )
-                    confirmations = int(w3.eth.block_number) - int(
-                        transaction["block_number"]
-                    )
-                    related_transactions.append(
-                        [address, amount, confirmations, category]
-                    )
+                amount = Decimal(transaction["amount"]) / Decimal(10**token_decimals)
+                confirmations = int(w3.eth.block_number) - int(
+                    transaction["block_number"]
+                )
+                related_transactions.append([address, amount, confirmations, category])
             if not related_transactions:
                 logger.warning(
                     f"txid {txid} is not related to any known address for {g.symbol}"
