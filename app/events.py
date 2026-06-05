@@ -73,19 +73,16 @@ def process_block(block, accounts: set, last_batch_block: int) -> list[str]:
         if tx_to is None:
             continue
 
-        is_incoming = tx_to in accounts and tx_from not in accounts
-
         if tx_from in accounts or tx_to in accounts:
             handle_event(transaction)
 
             block_txs.append(tx_to.lower())
             block_txs.append(tx_from.lower())
 
-            if is_incoming:
-                walletnotify_shkeeper(
-                    config["COIN_SYMBOL"],
-                    transaction["hash"].hex(),
-                )
+            walletnotify_shkeeper(
+                config["COIN_SYMBOL"],
+                transaction["hash"].hex(),
+            )
 
             if _should_drain(tx_from, tx_to, accounts, last_batch_block):
                 drain_account.delay(config["COIN_SYMBOL"], tx_to)
@@ -181,14 +178,11 @@ def process_token_transfers(
             from_addr = token_instance.provider.to_checksum_address(transaction["from"])
             to_addr = token_instance.provider.to_checksum_address(transaction["to"])
 
-            is_incoming = from_addr not in accounts and to_addr in accounts
-
             if from_addr not in accounts and to_addr not in accounts:
                 continue
 
             handle_event(transaction)
-            if is_incoming:
-                walletnotify_shkeeper(token_name, transaction["txid"])
+            walletnotify_shkeeper(token_name, transaction["txid"])
 
             if _should_drain(from_addr, to_addr, accounts, end_block):
                 drain_account.delay(token_name, to_addr)
