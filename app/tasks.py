@@ -18,6 +18,7 @@ w3 = make_provider()
 
 @celery.task()
 def make_multipayout(symbol, payout_list, fee):
+    logger.warning(f"Start multipayout {symbol} - {payout_list}")
     if symbol == COIN:
         coint_inst = Coin(symbol)
         payout_results = coint_inst.make_multipayout_eth(payout_list, fee)
