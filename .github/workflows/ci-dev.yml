@@ -20,7 +20,7 @@ jobs:
           flavor: |
             latest=false
           images: |
-            vsyshost/ethereum_like_coin
+            vsyshost/evm-shkeeper
           tags: |
             type=raw,value=dev-{{branch}}-{{sha}}
       -
