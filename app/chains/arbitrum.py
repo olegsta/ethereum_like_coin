@@ -1,6 +1,7 @@
 # flake8: noqa: E501
 COIN = "ARBETH"
 WALLET_ALIASES = ("ARB",)
+CHAIN_NAME = "arbitrum"
 
 DB_NAME = "arbitrum-shkeeper"
 # testnet

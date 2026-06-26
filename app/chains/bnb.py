@@ -1,6 +1,7 @@
 # flake8: noqa: E501
 COIN = "BNB"
 WALLET_ALIASES = ()
+CHAIN_NAME = "bnb"
 
 DB_NAME = "bnb-shkeeper"
 # testnet

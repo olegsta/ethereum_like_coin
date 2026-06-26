@@ -52,6 +52,7 @@ _coin_defaults = _chain.DEFAULTS
 _COIN_NETWORK = detect_network(_chain)
 
 config = {
+    "CHAIN_NAME": _chain.CHAIN_NAME,
     "COIN": COIN,
     "COIN_SYMBOL": COIN,
     "COIN_NETWORK": _COIN_NETWORK,

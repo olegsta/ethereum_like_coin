@@ -1,6 +1,7 @@
 # flake8: noqa: E501
 COIN = "OPETH"
 WALLET_ALIASES = ("OP",)
+CHAIN_NAME = "optimism"
 
 DB_NAME = "optimism-shkeeper"
 # testnet

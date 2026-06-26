@@ -3,22 +3,26 @@ from prometheus_client import generate_latest, Gauge
 
 from . import metrics_blueprint
 from ..models import Settings
+from ..config import config
 
 logger = logging.getLogger(__name__)
 
+_chain_name = config["CHAIN_NAME"]
 
-ethereum_fullnode_status = Gauge(
-    "ethereum_fullnode_status", "Connection status to ethereum fullnode"
+evm_fullnode_status = Gauge(
+    f"{_chain_name}_fullnode_status", f"Connection status to {_chain_name} fullnode"
 )
-ethereum_fullnode_last_block = Gauge(
-    "ethereum_fullnode_last_block", "Last block loaded to the fullnode"
+evm_fullnode_last_block = Gauge(
+    f"{_chain_name}_fullnode_last_block", f"Last block loaded to the {_chain_name} fullnode"
 )
-ethereum_wallet_last_block = Gauge("ethereum_wallet_last_block", "Last checked block")
-ethereum_fullnode_last_block_timestamp = Gauge(
-    "ethereum_fullnode_last_block_timestamp", "Fullnode block timestamp"
+evm_wallet_last_block = Gauge(
+    f"{_chain_name}_wallet_last_block", f"Last checked block for {_chain_name}"
 )
-ethereum_wallet_last_block_timestamp = Gauge(
-    "ethereum_wallet_last_block_timestamp", "Wallet block timestamp"
+evm_fullnode_last_block_timestamp = Gauge(
+    f"{_chain_name}_fullnode_last_block_timestamp", f"Fullnode block timestamp for {_chain_name}"
+)
+evm_wallet_last_block_timestamp = Gauge(
+    f"{_chain_name}_wallet_last_block_timestamp", f"Wallet block timestamp for {_chain_name}"
 )
 
 
@@ -44,9 +48,9 @@ def get_all_metrics():
         connected = False
 
     if not connected:
-        return {"ethereum_fullnode_status": 0}
+        return {f"{_chain_name}_fullnode_status": 0}
 
-    result = {"ethereum_fullnode_status": 1}
+    result = {f"{_chain_name}_fullnode_status": 1}
 
     # --- fullnode block ---
     try:
@@ -67,14 +71,14 @@ def get_all_metrics():
 
         wallet_block = w3.eth.get_block(last_checked)
 
-        result["ethereum_wallet_last_block"] = last_checked
-        result["ethereum_wallet_last_block_timestamp"] = wallet_block.get(
+        result["wallet_last_block"] = last_checked
+        result["wallet_last_block_timestamp"] = wallet_block.get(
             "timestamp", 0
         )
     except Exception as e:
         logger.warning("Wallet block fetch failed: %s", e)
-        result["ethereum_wallet_last_block"] = 0
-        result["ethereum_wallet_last_block_timestamp"] = 0
+        result["wallet_last_block"] = 0
+        result["wallet_last_block_timestamp"] = 0
 
     return result
 
@@ -85,24 +89,24 @@ def get_metrics():
         data = get_all_metrics()
 
         if not data:
-            ethereum_fullnode_status.set(0)
+            evm_fullnode_status.set(0)
             return generate_latest().decode()
 
-        ethereum_fullnode_status.set(data.get("ethereum_fullnode_status", 0))
+        evm_fullnode_status.set(data.get("fullnode_status", 0))
 
-        if data["ethereum_fullnode_status"] == 1:
-            ethereum_fullnode_last_block.set(data.get("last_fullnode_block_number", 0))
-            ethereum_fullnode_last_block_timestamp.set(
+        if data[f"{_chain_name}_fullnode_status"] == 1:
+            evm_fullnode_last_block.set(data.get("last_fullnode_block_number", 0))
+            evm_fullnode_last_block_timestamp.set(
                 data.get("last_fullnode_block_timestamp", 0)
             )
-            ethereum_wallet_last_block.set(data.get("ethereum_wallet_last_block", 0))
-            ethereum_wallet_last_block_timestamp.set(
-                data.get("ethereum_wallet_last_block_timestamp", 0)
+            evm_wallet_last_block.set(data.get("wallet_last_block", 0))
+            evm_wallet_last_block_timestamp.set(
+                data.get("wallet_last_block_timestamp", 0)
             )
 
     except Exception as e:
         logger.exception("Metrics endpoint failed completely: %s", e)
-        ethereum_fullnode_status.set(0)
+        evm_fullnode_status.set(0)
 
     # IMPORTANT: always return valid prometheus output
     return generate_latest().decode()

@@ -1,6 +1,7 @@
 # flake8: noqa: E501
 COIN = "AVAX"
 WALLET_ALIASES = ("AVALANCHE",)
+CHAIN_NAME = "avalanche"
 
 DB_NAME = "avalanche-shkeeper"
 # testnet

@@ -1,6 +1,7 @@
 # flake8: noqa: E501
 COIN = "MATIC"
 WALLET_ALIASES = ("POLYGON",)
+CHAIN_NAME = "polygon"
 
 DB_NAME = "polygon-shkeeper"
 # testnet

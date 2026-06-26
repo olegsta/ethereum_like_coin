@@ -1,6 +1,7 @@
 # flake8: noqa: E501
 COIN = "ETH"
 WALLET_ALIASES = ()
+CHAIN_NAME = "ethereum"
 
 DB_NAME = "ethereum-shkeeper"
 # testnet
