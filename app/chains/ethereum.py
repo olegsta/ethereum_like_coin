@@ -5,8 +5,8 @@ CHAIN_NAME = "ethereum"
 
 DB_NAME = "ethereum-shkeeper"
 # testnet
-# FULLNODE_URL = 'https://eth-sepolia-testnet.api.pocket.network'
-FULLNODE_URL = "http://ethereum:8545"
+FULLNODE_URL = 'https://eth-sepolia-testnet.api.pocket.network'
+# FULLNODE_URL = "http://ethereum:8545"
 
 ENV = {
     "network": (

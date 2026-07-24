@@ -5,8 +5,8 @@ CHAIN_NAME = "optimism"
 
 DB_NAME = "optimism-shkeeper"
 # testnet
-# FULLNODE_URL = 'https://sepolia.optimism.io'
-FULLNODE_URL = "http://optimism:8547"
+FULLNODE_URL = 'https://sepolia.optimism.io'
+# FULLNODE_URL = "http://optimism:8547"
 
 ENV = {
     "network": (
