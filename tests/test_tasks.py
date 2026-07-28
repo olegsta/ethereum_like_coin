@@ -11,7 +11,9 @@ class TestMakeMultipayout:
         coin_instance.make_multipayout_eth.return_value = [{"status": "success"}]
         post_payout_results.delay = MagicMock()
 
-        result = make_multipayout.run("ETH", [{"dest": "0x0", "amount": 1}], "0.001")
+        result = make_multipayout.run(
+            "ETH", [{"dest": "0x0", "amount": 1}], "0.001", None, None
+        )
 
         coin_cls.assert_called_once_with("ETH")
         coin_instance.make_multipayout_eth.assert_called_once()
@@ -28,7 +30,7 @@ class TestMakeMultipayout:
         post_payout_results.delay = MagicMock()
 
         result = make_multipayout.run(
-            "ETH-USDT", [{"dest": "0x0", "amount": 1}], "0.001"
+            "ETH-USDT", [{"dest": "0x0", "amount": 1}], "0.001", None, None
         )
 
         token_cls.assert_called_once_with("ETH-USDT")

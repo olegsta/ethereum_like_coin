@@ -28,28 +28,82 @@ def _get_foreign_wallets(db_name):
     rows = []
     try:
         with engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT pub_address, priv_key, type FROM wallets")
-            )
-            rows = [
-                {"pub_address": r[0], "priv_key": r[1], "type": r[2]} for r in result
-            ]
+            # fda_key may be missing on older DBs — fall back gracefully.
+            try:
+                result = conn.execute(
+                    text("SELECT pub_address, priv_key, type, fda_key FROM wallets")
+                )
+                rows = [
+                    {
+                        "pub_address": r[0],
+                        "priv_key": r[1],
+                        "type": r[2],
+                        "fda_key": r[3],
+                    }
+                    for r in result
+                ]
+            except Exception:
+                result = conn.execute(
+                    text("SELECT pub_address, priv_key, type FROM wallets")
+                )
+                rows = [
+                    {
+                        "pub_address": r[0],
+                        "priv_key": r[1],
+                        "type": r[2],
+                        "fda_key": None,
+                    }
+                    for r in result
+                ]
     finally:
         engine.dispose()
     return rows
 
 
+def _resolve_foreign_sweep_destination(wallet, local_fda_by_key, default_fda):
+    """Pick the FDA destination for a foreign-chain wallet on the current chain."""
+    from .services import fda as fda_service
+    from .models import Wallets
+
+    account = wallet["pub_address"]
+    if wallet.get("type") == "fee_deposit":
+        return account
+
+    # Prefer local Accounts.sweep_target if this address is also known locally.
+    try:
+        local_target = fda_service.get_sweep_target(account)
+        if local_target and local_target != default_fda:
+            return local_target
+        if local_target:
+            return local_target
+    except Exception:
+        pass
+
+    fda_key = wallet.get("fda_key") or fda_service.DEFAULT_FDA_KEY
+    if fda_key in local_fda_by_key:
+        return local_fda_by_key[fda_key]
+
+    fda_wallet = Wallets.query.filter_by(type="fee_deposit", fda_key=fda_key).first()
+    if fda_wallet:
+        return fda_wallet.pub_address
+    return default_fda
+
+
 @celery.task()
-def make_multipayout(symbol, payout_list, fee):
+def make_multipayout(symbol, payout_list, fee, from_account=None, fda_key=None):
     logger.warning(f"Start multipayout {symbol} - {payout_list}")
     if symbol == COIN:
         coint_inst = Coin(symbol)
-        payout_results = coint_inst.make_multipayout_eth(payout_list, fee)
+        payout_results = coint_inst.make_multipayout_eth(
+            payout_list, fee, from_account=from_account, fda_key=fda_key
+        )
         post_payout_results.delay(payout_results, symbol)
         return payout_results
     elif symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
         token_inst = Token(symbol)
-        payout_results = token_inst.make_token_multipayout(payout_list, fee)
+        payout_results = token_inst.make_token_multipayout(
+            payout_list, fee, from_account=from_account, fda_key=fda_key
+        )
         post_payout_results.delay(payout_results, symbol)
         return payout_results
     else:
@@ -81,6 +135,8 @@ def refresh_balances(self):
         app = create_app()
         app.app_context().push()
 
+        from .models import Wallets
+
         list_acccounts = get_all_accounts()
         for account in list_acccounts:
             try:
@@ -90,6 +146,13 @@ def refresh_balances(self):
                 raise Exception(
                     "There was exception during query to the database, try again later"
                 )
+
+            if pd and pd.type == "fee_deposit":
+                continue
+            if Wallets.query.filter_by(
+                pub_address=account, type="fee_deposit"
+            ).first():
+                continue
 
             acc_balance = decimal.Decimal(
                 w3.from_wei(w3.eth.get_balance(account), "ether")
@@ -152,15 +215,23 @@ def refresh_balances(self):
 @celery.task(bind=True)
 @skip_if_running
 def drain_account(self, symbol, account):
+    from .services import fda as fda_service
+    from .models import Wallets
+
+    if Wallets.query.filter_by(pub_address=account, type="fee_deposit").first():
+        logger.warning("Skipping drain of fee-deposit account %s", account)
+        return False
+
     logger.warning(f"Start draining from account {account} crypto {symbol}")
-    # return False
+    destination = fda_service.get_sweep_target(account)
+    if account == destination:
+        logger.warning("Account is already its sweep target, skip draining %s", account)
+        return False
     if symbol == COIN:
         inst = Coin(symbol)
-        destination = inst.get_fee_deposit_account()
         results = inst.drain_account(account, destination)
     elif symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
         inst = Token(symbol)
-        destination = inst.get_fee_deposit_account()
         results = inst.drain_tocken_account(account, destination)
     else:
         raise Exception("Symbol is not in config")
@@ -170,11 +241,12 @@ def drain_account(self, symbol, account):
 
 @celery.task(bind=True)
 @skip_if_running
-def create_fee_deposit_account(self):
-    logger.warning("Creating fee-deposit account")
-    inst = Coin(COIN)
-    inst.set_fee_deposit_account()
-    return True
+def create_fee_deposit_account(self, fda_key=None):
+    from .services import fda as fda_service
+
+    logger.warning("Creating fee-deposit account for key %s", fda_key)
+    address = fda_service.create_fda(fda_key)
+    return address
 
 
 def _sweep_native(
@@ -359,10 +431,28 @@ def sweep_foreign_chains(self):
         app.app_context().push()
 
         coin_inst = Coin(COIN)
-        fee_deposit_addr = coin_inst.get_fee_deposit_account()
-        fee_deposit_priv_key = (
-            None if dry_run else coin_inst.get_seed_from_address(fee_deposit_addr)
-        )
+        from .services import fda as fda_service
+        from .models import Wallets
+
+        local_fda_by_key = {
+            w.fda_key or fda_service.DEFAULT_FDA_KEY: w.pub_address
+            for w in Wallets.query.filter_by(type="fee_deposit").all()
+        }
+        default_fda = coin_inst.get_fee_deposit_account()
+        local_fda_by_key.setdefault(fda_service.DEFAULT_FDA_KEY, default_fda)
+
+        fda_priv_by_addr = {}
+        if not dry_run:
+            for w in Wallets.query.filter_by(type="fee_deposit").all():
+                try:
+                    fda_priv_by_addr[w.pub_address.lower()] = Encryption.decrypt(
+                        w.priv_key
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Cannot decrypt FDA key for %s: %s", w.pub_address, e
+                    )
+
         fee = coin_inst.get_max_priority_fee()
         multiplier = decimal.Decimal(config["MULTIPLIER"])
         current_network = config["CURRENT_NETWORK"]
@@ -430,6 +520,12 @@ def sweep_foreign_chains(self):
                     continue
 
                 chain_summary["checked"] += 1
+                destination = _resolve_foreign_sweep_destination(
+                    wallet, local_fda_by_key, default_fda
+                )
+                fee_deposit_priv_key = None
+                if not dry_run and destination:
+                    fee_deposit_priv_key = fda_priv_by_addr.get(destination.lower())
 
                 # --- Native coin balance ---
                 try:
@@ -449,7 +545,8 @@ def sweep_foreign_chains(self):
                     chain_summary["native_total"] += native_balance
                     logger.warning(
                         f"[SWEEP][{chain_coin}] {checksum_addr} (type={wallet['type']}) "
-                        f"holds {native_balance} {COIN} on current chain"
+                        f"holds {native_balance} {COIN} on current chain "
+                        f"(dest={destination})"
                     )
 
                 # --- Token balances (sweep before native to preserve gas) ---
@@ -479,21 +576,25 @@ def sweep_foreign_chains(self):
                         chain_summary["token_totals"][token_sym] += token_balance
                         logger.warning(
                             f"[SWEEP][{chain_coin}] {checksum_addr} (type={wallet['type']}) "
-                            f"holds {token_balance} {token_sym} on current chain"
+                            f"holds {token_balance} {token_sym} on current chain "
+                            f"(dest={destination})"
                         )
                         if not dry_run:
-                            if checksum_addr == w3.to_checksum_address(
-                                fee_deposit_addr
-                            ):
+                            if checksum_addr == w3.to_checksum_address(destination):
                                 logger.warning(
-                                    f"[SWEEP][{chain_coin}] {checksum_addr} is the current "
-                                    f"fee-deposit address, skipping token sweep"
+                                    f"[SWEEP][{chain_coin}] {checksum_addr} is already "
+                                    f"its fee-deposit destination, skipping token sweep"
+                                )
+                            elif not fee_deposit_priv_key:
+                                logger.warning(
+                                    f"[SWEEP][{chain_coin}] No FDA private key for "
+                                    f"destination {destination}, skipping token sweep"
                                 )
                             else:
                                 try:
                                     _sweep_token(
                                         checksum_addr,
-                                        fee_deposit_addr,
+                                        destination,
                                         token_balance,
                                         token_inst,
                                         fee,
@@ -518,16 +619,16 @@ def sweep_foreign_chains(self):
                 # --- Native sweep (after tokens, so gas is not prematurely drained) ---
                 if native_balance >= decimal.Decimal(config["MIN_TRANSFER_THRESHOLD"]):
                     if not dry_run:
-                        if checksum_addr == w3.to_checksum_address(fee_deposit_addr):
+                        if checksum_addr == w3.to_checksum_address(destination):
                             logger.warning(
-                                f"[SWEEP][{chain_coin}] {checksum_addr} is the current "
-                                f"fee-deposit address, skipping native sweep"
+                                f"[SWEEP][{chain_coin}] {checksum_addr} is already "
+                                f"its fee-deposit destination, skipping native sweep"
                             )
                         else:
                             try:
                                 _sweep_native(
                                     checksum_addr,
-                                    fee_deposit_addr,
+                                    destination,
                                     native_balance,
                                     fee,
                                     multiplier,

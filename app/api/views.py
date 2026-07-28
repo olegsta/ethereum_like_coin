@@ -7,6 +7,7 @@ from ..encryption import Encryption
 from ..token import Token, Coin, get_all_accounts, make_provider
 from ..logging import logger
 from ..services.transaction_lookup import TransactionLookupService
+from ..services import fda as fda_service
 from . import api
 from app import create_app
 
@@ -18,8 +19,32 @@ app = create_app()
 app.app_context().push()
 
 
+def _payout_source():
+    return fda_service.request_json_field("from_account", "account") or None
+
+
+def _fda_key():
+    return fda_service.request_json_field("fda_key") or None
+
+
 @api.post("/generate-address")
 def generate_new_address():
+    sweep_target = fda_service.request_json_field(
+        "fee_deposit_account", "sweep_target"
+    )
+    fda_key = _fda_key()
+    if not sweep_target:
+        # Optional for backward compatibility: fall back to default / requested FDA.
+        try:
+            sweep_target = fda_service.get_fda_address(fda_key=fda_key)
+        except Exception as exc:
+            return {
+                "status": "error",
+                "msg": f"fee_deposit_account (sweep_target) is required: {exc}",
+            }, 400
+    else:
+        fda_key = fda_key or fda_service.resolve_fda_key_for_address(sweep_target)
+
     acc = w3l.eth.account.create()
     crypto_str = str(g.symbol)
     e = Encryption
@@ -38,6 +63,8 @@ def generate_new_address():
                     address=acc.address,
                     crypto=crypto_str,
                     amount=0,
+                    sweep_target=sweep_target,
+                    fda_key=fda_key,
                 )
             )
             db.session.commit()
@@ -52,17 +79,30 @@ def generate_new_address():
     return {"status": "success", "address": acc.address}
 
 
+@api.post("/create-fee-deposit-account")
+def create_fee_deposit_account():
+    fda_key = fda_service.request_json_field("fda_key")
+    address = fda_service.create_fda(fda_key)
+    return {"status": "success", "account": address, "fda_key": fda_key or fda_service.DEFAULT_FDA_KEY}
+
+
 @api.post("/balance")
 def get_balance():
     crypto_str = str(g.symbol)
+    from_account = _payout_source()
+    fda_key = _fda_key()
     try:
         if crypto_str == config["COIN_SYMBOL"]:
             inst = Coin(config["COIN_SYMBOL"])
-            balance = inst.get_fee_deposit_coin_balance()
+            balance = inst.get_fee_deposit_coin_balance(
+                account=from_account, fda_key=fda_key
+            )
         else:
             if crypto_str in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
                 token_instance = Token(crypto_str)
-                balance = token_instance.get_fee_deposit_token_balance()
+                balance = token_instance.get_fee_deposit_token_balance(
+                    account=from_account, fda_key=fda_key
+                )
             else:
                 return {"status": "error", "msg": "token is not defined in config"}
     except ValueError as exc:
@@ -90,24 +130,38 @@ def get_transaction(txid):
 
 @api.post("/dump")
 def dump():
+    fda_key = _fda_key()
+    sweep_target = fda_service.request_json_field("sweep_target")
     w = Coin(config["COIN_SYMBOL"])
-    all_wallets = w.get_dump()
+    all_wallets = w.get_dump(fda_key=fda_key, sweep_target=sweep_target)
     return all_wallets
 
 
 @api.post("/fee-deposit-account")
 def get_fee_deposit_account():
+    from_account = _payout_source()
+    fda_key = _fda_key()
     if g.symbol == config["COIN_SYMBOL"]:
         coin_instance = Coin(g.symbol)
+        account = coin_instance.get_fee_deposit_account(
+            fda_key=fda_key, account=from_account
+        )
         return {
-            "account": coin_instance.get_fee_deposit_account(),
-            "balance": coin_instance.get_fee_deposit_coin_balance(),
+            "account": account,
+            "balance": coin_instance.get_fee_deposit_coin_balance(
+                account=account, fda_key=fda_key
+            ),
         }
     elif g.symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
         token_instance = Token(g.symbol)
+        account = token_instance.get_fee_deposit_account(
+            fda_key=fda_key, account=from_account
+        )
         return {
-            "account": token_instance.get_fee_deposit_account(),
-            "balance": token_instance.get_fee_deposit_account_balance(),
+            "account": account,
+            "balance": token_instance.get_fee_deposit_account_balance(
+                account=account, fda_key=fda_key
+            ),
         }
     else:
         raise Exception(f"Symbol {g.symbol} cannot be processed")
@@ -115,5 +169,9 @@ def get_fee_deposit_account():
 
 @api.post("/get_all_addresses")
 def get_all_addresses():
-    all_addresses_list = get_all_accounts()
+    fda_key = _fda_key()
+    sweep_target = fda_service.request_json_field("sweep_target")
+    all_addresses_list = get_all_accounts(
+        fda_key=fda_key, sweep_target=sweep_target
+    )
     return all_addresses_list

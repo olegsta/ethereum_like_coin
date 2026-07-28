@@ -5,9 +5,20 @@ from flask import g, request
 from .. import celery
 from ..tasks import make_multipayout
 from . import api
+from ..services import fda as fda_service
 
 from ..token import Token, Coin, make_provider
 from ..config import config
+
+
+def _payout_source():
+    data = request.get_json(silent=True) or {}
+    return data.get("from_account") or data.get("account")
+
+
+def _fda_key():
+    data = request.get_json(silent=True) or {}
+    return data.get("fda_key")
 
 
 @api.post("/calc-tx-fee/<decimal:amount>")
@@ -33,9 +44,18 @@ def multipayout():
     w3 = make_provider()
 
     try:
-        payout_list = request.get_json(force=True)
+        payload = request.get_json(force=True)
     except Exception as e:
         raise Exception(f"Bad JSON in payout list: {e}")
+
+    if isinstance(payload, dict):
+        payout_list = payload.get("payouts") or payload.get("payout_list") or []
+        from_account = payload.get("from_account") or payload.get("account")
+        fda_key = payload.get("fda_key")
+    else:
+        payout_list = payload
+        from_account = None
+        fda_key = None
 
     if not payout_list:
         raise Exception("Payout list is empty!")
@@ -59,10 +79,18 @@ def multipayout():
     max_fee = coin_inst.get_max_priority_fee()
 
     if g.symbol == config["COIN_SYMBOL"]:
-        task = (make_multipayout.s(g.symbol, payout_list, max_fee)).apply_async()
+        task = (
+            make_multipayout.s(
+                g.symbol, payout_list, max_fee, from_account, fda_key
+            )
+        ).apply_async()
         return {"task_id": task.id}
     elif g.symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
-        task = (make_multipayout.s(g.symbol, payout_list, max_fee)).apply_async()
+        task = (
+            make_multipayout.s(
+                g.symbol, payout_list, max_fee, from_account, fda_key
+            )
+        ).apply_async()
         return {"task_id": task.id}
     else:
         raise Exception(f"{g.symbol} is not defined in config, cannot make payout")
@@ -73,14 +101,23 @@ def payout(to, amount):
 
     coin_inst = Coin(config["COIN_SYMBOL"])
     max_fee = coin_inst.get_max_priority_fee()
+    from_account = fda_service.request_json_field("from_account", "account")
+    fda_key = fda_service.request_json_field("fda_key")
 
     payout_list = [{"dest": to, "amount": amount}]
     if g.symbol == config["COIN_SYMBOL"]:
-        payout_list = [{"dest": to, "amount": amount}]
-        task = (make_multipayout.s(g.symbol, payout_list, max_fee)).apply_async()
+        task = (
+            make_multipayout.s(
+                g.symbol, payout_list, max_fee, from_account, fda_key
+            )
+        ).apply_async()
         return {"task_id": task.id}
     elif g.symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
-        task = (make_multipayout.s(g.symbol, payout_list, max_fee)).apply_async()
+        task = (
+            make_multipayout.s(
+                g.symbol, payout_list, max_fee, from_account, fda_key
+            )
+        ).apply_async()
         return {"task_id": task.id}
     else:
         raise Exception(f"{g.symbol} is not defined in config, cannot make payout")
