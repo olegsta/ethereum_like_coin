@@ -10,9 +10,10 @@ DEFAULT_FDA_KEY = "default"
 
 
 def _normalize_fda_key(fda_key):
-    if not fda_key:
+    if fda_key is None:
         return DEFAULT_FDA_KEY
-    return str(fda_key).strip()
+    key = str(fda_key).strip()
+    return key or DEFAULT_FDA_KEY
 
 
 def _fda_wallet_query(fda_key):
@@ -30,6 +31,9 @@ def _legacy_fda_wallet():
 
 def get_fda_address(fda_key=None, account=None):
     if account:
+        wallet = Wallets.query.filter_by(pub_address=account).first()
+        if not wallet:
+            raise ValueError(f"Unknown from_account {account!r}")
         return account
 
     fda_key = _normalize_fda_key(fda_key)
@@ -166,31 +170,50 @@ def request_json_field(*names):
     return None
 
 
-def wallet_in_scope(wallet, fda_key=None, sweep_target=None):
+def preload_scope_lookups():
+    accounts_by_address = {row.address: row for row in Accounts.query.all()}
+    fda_wallets_by_address = {
+        wallet.pub_address: wallet
+        for wallet in Wallets.query.filter_by(type="fee_deposit").all()
+    }
+    return accounts_by_address, fda_wallets_by_address
+
+
+def wallet_in_scope(
+    wallet, fda_key=None, sweep_target=None, accounts_by_address=None
+):
     if not fda_key and not sweep_target:
         return True
     normalized_key = _normalize_fda_key(fda_key) if fda_key else None
     if wallet.type == "fee_deposit":
         return bool(normalized_key and wallet.fda_key == normalized_key)
-    if wallet.type == "regular" and sweep_target:
-        row = Accounts.query.filter_by(address=wallet.pub_address).first()
-        return bool(row and row.sweep_target == sweep_target)
-    if wallet.type == "regular" and normalized_key:
-        row = Accounts.query.filter_by(address=wallet.pub_address).first()
+
+    if wallet.type == "regular" and (sweep_target or normalized_key):
+        if accounts_by_address is not None:
+            row = accounts_by_address.get(wallet.pub_address)
+        else:
+            row = Accounts.query.filter_by(address=wallet.pub_address).first()
+        if sweep_target:
+            return bool(row and row.sweep_target == sweep_target)
         return bool(row and row.fda_key == normalized_key)
     return False
 
 
-def account_in_scope(account, fda_key=None, sweep_target=None):
+def account_in_scope(
+    account, fda_key=None, sweep_target=None, fda_wallets_by_address=None
+):
     if not fda_key and not sweep_target:
         return True
     normalized_key = _normalize_fda_key(fda_key) if fda_key else None
     if account.type == "fee_deposit":
         if getattr(account, "fda_key", None):
             return bool(normalized_key and account.fda_key == normalized_key)
-        wallet = Wallets.query.filter_by(
-            pub_address=account.address, type="fee_deposit"
-        ).first()
+        if fda_wallets_by_address is not None:
+            wallet = fda_wallets_by_address.get(account.address)
+        else:
+            wallet = Wallets.query.filter_by(
+                pub_address=account.address, type="fee_deposit"
+            ).first()
         return bool(wallet and normalized_key and wallet.fda_key == normalized_key)
     if sweep_target and account.sweep_target == sweep_target:
         return True

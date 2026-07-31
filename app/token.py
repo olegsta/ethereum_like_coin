@@ -67,9 +67,18 @@ def get_all_accounts(fda_key=None, sweep_target=None):
                     "There was exception during query to the database, try again later"
                 )
         break
+    fda_wallets_by_address = None
+    if fda_key or sweep_target:
+        fda_wallets_by_address = {
+            wallet.pub_address: wallet
+            for wallet in Wallets.query.filter_by(type="fee_deposit").all()
+        }
     for account in all_account_list:
         if fda_service.account_in_scope(
-            account, fda_key=fda_key, sweep_target=sweep_target
+            account,
+            fda_key=fda_key,
+            sweep_target=sweep_target,
+            fda_wallets_by_address=fda_wallets_by_address,
         ):
             account_list.append(account.address)
     return account_list
@@ -398,9 +407,15 @@ class Coin:
                         "There was exception during query to the database, try again later"
                     )
             break
+        accounts_by_address = None
+        if fda_key or sweep_target:
+            accounts_by_address, _ = fda_service.preload_scope_lookups()
         for wallet in pd:
             if not fda_service.wallet_in_scope(
-                wallet, fda_key=fda_key, sweep_target=sweep_target
+                wallet,
+                fda_key=fda_key,
+                sweep_target=sweep_target,
+                accounts_by_address=accounts_by_address,
             ):
                 continue
             all_wallets.update(

@@ -11,16 +11,6 @@ from ..token import Token, Coin, make_provider
 from ..config import config
 
 
-def _payout_source():
-    data = request.get_json(silent=True) or {}
-    return data.get("from_account") or data.get("account")
-
-
-def _fda_key():
-    data = request.get_json(silent=True) or {}
-    return data.get("fda_key")
-
-
 @api.post("/calc-tx-fee/<decimal:amount>")
 def calc_tx_fee(amount):
     if g.symbol == config["COIN_SYMBOL"]:
