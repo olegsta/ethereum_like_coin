@@ -267,7 +267,7 @@ class Coin:
             )
         else:
             nonce = self.provider.eth.get_transaction_count(
-                self.get_fee_deposit_account(), 
+                self.get_fee_deposit_account(),
                 block_identifier="pending"
             )
             for payout in payout_list:
@@ -962,7 +962,7 @@ class Token:
                         self.provider.to_wei(need_to_send, "ether")
                     ),
                     "nonce": self.provider.eth.get_transaction_count(
-                        self.get_fee_deposit_account(), 
+                        self.get_fee_deposit_account(),
                         block_identifier="pending"
                     ),
                     "gas": self.provider.to_hex(gas_coin_count),
