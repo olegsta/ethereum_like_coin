@@ -205,7 +205,7 @@ def _sweep_native(
         "from": w3.to_checksum_address(account),
         "to": w3.to_checksum_address(destination),
         "value": w3.to_hex(w3.to_wei(can_send, "ether")),
-        "nonce": w3.eth.get_transaction_count(w3.to_checksum_address(account)),
+        "nonce": w3.eth.get_transaction_count(w3.to_checksum_address(account), block_identifier="pending"),
         "gas": w3.to_hex(gas_count),
         "maxFeePerGas": w3.to_hex(w3.to_wei(max_fee_per_gas, "ether")),
         "maxPriorityFeePerGas": w3.to_hex(w3.to_wei(fee, "ether")),
@@ -248,7 +248,7 @@ def _sweep_token(
     ).build_transaction(
         {
             "from": w3.to_checksum_address(account),
-            "nonce": w3.eth.get_transaction_count(w3.to_checksum_address(account)),
+            "nonce": w3.eth.get_transaction_count(w3.to_checksum_address(account), block_identifier="pending"),
         }
     )
     l1_fee = _get_l1_fee(w3, dummy_tx["data"])
@@ -284,7 +284,7 @@ def _sweep_token(
             "from": w3.to_checksum_address(destination),
             "to": w3.to_checksum_address(account),
             "value": w3.to_hex(w3.to_wei(need_to_send, "ether")),
-            "nonce": w3.eth.get_transaction_count(w3.to_checksum_address(destination)),
+            "nonce": w3.eth.get_transaction_count(w3.to_checksum_address(destination), block_identifier="pending"),
             "gas": w3.to_hex(seed_gas),
             "maxFeePerGas": w3.to_hex(w3.to_wei(seed_max_fee_per_gas, "ether")),
             "maxPriorityFeePerGas": w3.to_hex(w3.to_wei(fee, "ether")),
@@ -308,7 +308,7 @@ def _sweep_token(
             "gas": gas,
             "maxFeePerGas": w3.to_wei(max_fee_per_gas, "ether"),
             "maxPriorityFeePerGas": w3.to_wei(fee, "ether"),
-            "nonce": w3.eth.get_transaction_count(w3.to_checksum_address(account)),
+            "nonce": w3.eth.get_transaction_count(w3.to_checksum_address(account), block_identifier="pending"),
             "chainId": w3.eth.chain_id,
         }
     )

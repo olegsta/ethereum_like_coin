@@ -267,7 +267,8 @@ class Coin:
             )
         else:
             nonce = self.provider.eth.get_transaction_count(
-                self.get_fee_deposit_account()
+                self.get_fee_deposit_account(), 
+                block_identifier="pending"
             )
             for payout in payout_list:
                 test_transaction = {
@@ -377,7 +378,7 @@ class Coin:
                 "from": self.provider.to_checksum_address(account),
                 "to": self.provider.to_checksum_address(destination),
                 "value": self.provider.to_hex(self.provider.to_wei(can_send, "ether")),
-                "nonce": self.provider.eth.get_transaction_count(account),
+                "nonce": self.provider.eth.get_transaction_count(account, block_identifier="pending"),
                 "gas": self.provider.to_hex(gas_count),
                 "maxFeePerGas": self.provider.to_hex(
                     self.provider.to_wei(max_fee_per_gas, "ether")
@@ -788,7 +789,7 @@ class Token:
         ).build_transaction(
             {
                 "from": Web3.to_checksum_address(payout_account),
-                "nonce": self.provider.eth.get_transaction_count(payout_account),
+                "nonce": self.provider.eth.get_transaction_count(payout_account, block_identifier="pending"),
             }
         )
         l1_fee = _get_l1_fee(self.provider, dummy_tx["data"])
@@ -807,7 +808,7 @@ class Token:
                 f"Have not enough crypto on fee account, need {need_crypto_for_multipayout} have {have_crypto}"
             )
         else:
-            nonce = self.provider.eth.get_transaction_count(payout_account)
+            nonce = self.provider.eth.get_transaction_count(payout_account, block_identifier="pending")
             for payout in payout_list:
 
                 gas = self.contract.functions.transfer(
@@ -917,7 +918,7 @@ class Token:
             ).build_transaction(
                 {
                     "from": Web3.to_checksum_address(account),
-                    "nonce": self.provider.eth.get_transaction_count(account),
+                    "nonce": self.provider.eth.get_transaction_count(account, block_identifier="pending"),
                 }
             )
             l1_fee = _get_l1_fee(self.provider, dummy_tx["data"])
@@ -961,7 +962,8 @@ class Token:
                         self.provider.to_wei(need_to_send, "ether")
                     ),
                     "nonce": self.provider.eth.get_transaction_count(
-                        self.get_fee_deposit_account()
+                        self.get_fee_deposit_account(), 
+                        block_identifier="pending"
                     ),
                     "gas": self.provider.to_hex(gas_coin_count),
                     "maxFeePerGas": self.provider.to_hex(
@@ -997,7 +999,7 @@ class Token:
                     "maxPriorityFeePerGas": self.provider.to_wei(
                         Decimal(self.get_max_priority_fee()), "ether"
                     ),
-                    "nonce": self.provider.eth.get_transaction_count(account),
+                    "nonce": self.provider.eth.get_transaction_count(account, block_identifier="pending"),
                     "chainId": self.provider.eth.chain_id,
                 }
             )
