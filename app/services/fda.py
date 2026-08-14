@@ -48,7 +48,9 @@ def get_fda_address(store_id=None):
     if wallet:
         return wallet.pub_address
 
-    raise ValueError(f"Fee-deposit account not found for store_id={store_id!r}")
+    # Same as the old celery create_fee_deposit_account + set_fee_deposit_account:
+    # first balance/status/address request creates the store FDA if missing.
+    return create_fda(store_id)
 
 
 def create_fda(store_id=None):

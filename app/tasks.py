@@ -75,24 +75,18 @@ def _get_foreign_wallets(db_name):
 
 
 def _resolve_foreign_sweep_destination(wallet, local_fda_by_store):
-    """Pick the FDA destination for a foreign-chain wallet on the current chain."""
+    """Pick this chain's FDA for a foreign-chain wallet (including foreign FDAs)."""
     from .models import Wallets, Accounts
     from .services.fda import parse_store_id
 
-    account = wallet["pub_address"]
-    if wallet.get("type") == "fee_deposit":
-        return account
-
-    store_id = None
-    try:
-        row = Accounts.query.filter_by(address=account).first()
-        if row is not None:
-            store_id = row.store_id
-    except Exception:
-        pass
-
+    store_id = wallet.get("store_id")
     if store_id is None:
-        store_id = wallet.get("store_id")
+        try:
+            row = Accounts.query.filter_by(address=wallet["pub_address"]).first()
+            if row is not None:
+                store_id = row.store_id
+        except Exception:
+            pass
     if store_id is None:
         return None
 
