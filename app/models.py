@@ -20,8 +20,7 @@ class Accounts(db.Model):
     )
     status = db.Column(db.String(10))
     type = db.Column(db.String(30))
-    sweep_target = db.Column(db.String(70))
-    fda_key = db.Column(db.String(128))
+    store_id = db.Column(db.Integer)
     __table_args__ = (db.UniqueConstraint("id"),)
 
 
@@ -36,9 +35,10 @@ class Wallets(db.Model):
     )
     status = db.Column(db.String(10))
     type = db.Column(db.String(30))
-    fda_key = db.Column(db.String(128))
+    # Only fee_deposit rows set store_id; regular wallets keep NULL.
+    store_id = db.Column(db.Integer)
     __table_args__ = (
         db.UniqueConstraint("id"),
-        # Only fee_deposit rows set fda_key; NULL is allowed for regular wallets.
-        db.Index("uq_wallets_fee_deposit_fda_key", "fda_key", unique=True),
+        # Only fee_deposit rows set store_id; NULL is allowed for regular wallets.
+        db.Index("uq_wallets_fee_deposit_store_id", "store_id", unique=True),
     )

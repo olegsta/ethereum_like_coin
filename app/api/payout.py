@@ -11,26 +11,30 @@ from ..token import Token, Coin, make_provider
 from ..config import config
 
 
-def _payout_source():
-    data = request.get_json(silent=True) or {}
-    return data.get("from_account") or data.get("account")
-
-
-def _fda_key():
-    data = request.get_json(silent=True) or {}
-    return data.get("fda_key")
-
-
 @api.post("/calc-tx-fee/<decimal:amount>")
 def calc_tx_fee(amount):
+    from_account = fda_service.request_json_field("from_account", "account")
+    data = request.get_json(silent=True) or {}
+    try:
+        store_id = fda_service.resolve_account_store_id(
+            store_id=data["store_id"] if "store_id" in data else None,
+            fee_deposit_account=from_account,
+        )
+    except ValueError as exc:
+        return {"status": "error", "msg": str(exc)}, 400
+
     if g.symbol == config["COIN_SYMBOL"]:
         coin_inst = Coin(config["COIN_SYMBOL"])
-        fee = coin_inst.get_transaction_price()
+        fee = coin_inst.get_transaction_price(
+            account=from_account, store_id=store_id
+        )
         return {"accounts_num": 1, "fee": float(fee)}
 
     elif g.symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
         token_instance = Token(g.symbol)
-        need_crypto = token_instance.get_coin_transaction_fee()
+        need_crypto = token_instance.get_coin_transaction_fee(
+            account=from_account, store_id=store_id
+        )
         return {
             "accounts_num": 1,
             "fee": float(need_crypto),
@@ -51,11 +55,17 @@ def multipayout():
     if isinstance(payload, dict):
         payout_list = payload.get("payouts") or payload.get("payout_list") or []
         from_account = payload.get("from_account") or payload.get("account")
-        fda_key = payload.get("fda_key")
+        try:
+            store_id = fda_service.resolve_account_store_id(
+                store_id=payload["store_id"] if "store_id" in payload else None,
+                fee_deposit_account=from_account,
+            )
+        except ValueError as exc:
+            return {"status": "error", "msg": str(exc)}, 400
     else:
         payout_list = payload
         from_account = None
-        fda_key = None
+        store_id = fda_service.DEFAULT_STORE_ID
 
     if not payout_list:
         raise Exception("Payout list is empty!")
@@ -75,20 +85,27 @@ def multipayout():
         if transfer["amount"] <= 0:
             raise Exception(f"Payout amount should be a positive number: {transfer}")
 
+    try:
+        Coin(config["COIN_SYMBOL"]).get_fee_deposit_account(
+            store_id=store_id, account=from_account
+        )
+    except ValueError as exc:
+        return {"status": "error", "msg": str(exc)}, 400
+
     coin_inst = Coin(config["COIN_SYMBOL"])
     max_fee = coin_inst.get_max_priority_fee()
 
     if g.symbol == config["COIN_SYMBOL"]:
         task = (
             make_multipayout.s(
-                g.symbol, payout_list, max_fee, from_account, fda_key
+                g.symbol, payout_list, max_fee, from_account, store_id
             )
         ).apply_async()
         return {"task_id": task.id}
     elif g.symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
         task = (
             make_multipayout.s(
-                g.symbol, payout_list, max_fee, from_account, fda_key
+                g.symbol, payout_list, max_fee, from_account, store_id
             )
         ).apply_async()
         return {"task_id": task.id}
@@ -102,20 +119,30 @@ def payout(to, amount):
     coin_inst = Coin(config["COIN_SYMBOL"])
     max_fee = coin_inst.get_max_priority_fee()
     from_account = fda_service.request_json_field("from_account", "account")
-    fda_key = fda_service.request_json_field("fda_key")
+    data = request.get_json(silent=True) or {}
+    try:
+        store_id = fda_service.resolve_account_store_id(
+            store_id=data["store_id"] if "store_id" in data else None,
+            fee_deposit_account=from_account,
+        )
+        coin_inst.get_fee_deposit_account(
+            store_id=store_id, account=from_account
+        )
+    except ValueError as exc:
+        return {"status": "error", "msg": str(exc)}, 400
 
     payout_list = [{"dest": to, "amount": amount}]
     if g.symbol == config["COIN_SYMBOL"]:
         task = (
             make_multipayout.s(
-                g.symbol, payout_list, max_fee, from_account, fda_key
+                g.symbol, payout_list, max_fee, from_account, store_id
             )
         ).apply_async()
         return {"task_id": task.id}
     elif g.symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
         task = (
             make_multipayout.s(
-                g.symbol, payout_list, max_fee, from_account, fda_key
+                g.symbol, payout_list, max_fee, from_account, store_id
             )
         ).apply_async()
         return {"task_id": task.id}

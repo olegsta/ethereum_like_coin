@@ -9,12 +9,18 @@ acc_password = False
 
 
 def _fetch_password_from_shkeeper():
-    resp = rq.get(
-        f'http://{config["SHKEEPER_HOST"]}/api/v1/{config["COIN_SYMBOL"]}/decrypt',
-        headers={"X-Shkeeper-Backend-Key": config["SHKEEPER_KEY"]},
-        timeout=10,
-    )
-    r = resp.json()
+    try:
+        resp = rq.get(
+            f'http://{config["SHKEEPER_HOST"]}/api/v1/{config["COIN_SYMBOL"]}/decrypt',
+            headers={"X-Shkeeper-Backend-Key": config["SHKEEPER_KEY"]},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        r = resp.json()
+    except (rq.RequestException, ValueError) as exc:
+        logger.warning("Failed to fetch decrypt status from shkeeper: %s", exc)
+        return False
+
     if r.get("persistent_status") == "disabled":
         logger.warning("Encryption is disabled")
         return r.get("key")

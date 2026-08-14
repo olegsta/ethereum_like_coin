@@ -5,7 +5,7 @@ CHAIN_NAME = "arbitrum"
 
 DB_NAME = "arbitrum-shkeeper"
 # testnet
-# FULLNODE_URL = 'https://sepolia-rollup.arbitrum.io/rpc''
+# FULLNODE_URL = 'https://sepolia-rollup.arbitrum.io/rpc'
 FULLNODE_URL = "http://arbitrum:8545"
 
 ENV = {

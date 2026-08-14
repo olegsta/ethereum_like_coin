@@ -21,24 +21,23 @@ w3 = make_provider()
 
 
 def _get_foreign_wallets(db_name):
-    """Return all rows from the `wallets` table of a foreign chain's database."""
+    """Return wallets from a foreign chain DB, enriched with accounts.store_id."""
     engine = create_engine(
         f"mariadb+pymysql://root:shkeeper@mariadb/{db_name}?charset=utf8mb4"
     )
     rows = []
     try:
         with engine.connect() as conn:
-            # fda_key may be missing on older DBs — fall back gracefully.
             try:
                 result = conn.execute(
-                    text("SELECT pub_address, priv_key, type, fda_key FROM wallets")
+                    text("SELECT pub_address, priv_key, type, store_id FROM wallets")
                 )
                 rows = [
                     {
                         "pub_address": r[0],
                         "priv_key": r[1],
                         "type": r[2],
-                        "fda_key": r[3],
+                        "store_id": r[3],
                     }
                     for r in result
                 ]
@@ -51,58 +50,76 @@ def _get_foreign_wallets(db_name):
                         "pub_address": r[0],
                         "priv_key": r[1],
                         "type": r[2],
-                        "fda_key": None,
+                        "store_id": None,
                     }
                     for r in result
                 ]
+
+            # Regular wallets store store_id on accounts, not wallets.
+            try:
+                result = conn.execute(
+                    text(
+                        "SELECT address, store_id FROM accounts "
+                        "WHERE store_id IS NOT NULL"
+                    )
+                )
+                addr_to_store = {r[0]: r[1] for r in result}
+                for wallet in rows:
+                    if wallet.get("store_id") is None:
+                        wallet["store_id"] = addr_to_store.get(wallet["pub_address"])
+            except Exception:
+                pass
     finally:
         engine.dispose()
     return rows
 
 
-def _resolve_foreign_sweep_destination(wallet, local_fda_by_key, default_fda):
+def _resolve_foreign_sweep_destination(wallet, local_fda_by_store, default_fda):
     """Pick the FDA destination for a foreign-chain wallet on the current chain."""
-    from .services import fda as fda_service
-    from .models import Wallets
+    from .models import Wallets, Accounts
+    from .services.fda import DEFAULT_STORE_ID, parse_store_id
 
     account = wallet["pub_address"]
     if wallet.get("type") == "fee_deposit":
         return account
 
-    # Prefer local Accounts.sweep_target if this address is also known locally.
+    store_id = None
     try:
-        local_target = fda_service.get_sweep_target(account)
-        if local_target and local_target != default_fda:
-            return local_target
-        if local_target:
-            return local_target
+        row = Accounts.query.filter_by(address=account).first()
+        if row is not None:
+            store_id = row.store_id
     except Exception:
         pass
 
-    fda_key = wallet.get("fda_key") or fda_service.DEFAULT_FDA_KEY
-    if fda_key in local_fda_by_key:
-        return local_fda_by_key[fda_key]
+    if store_id is None:
+        store_id = wallet.get("store_id")
+    store_id = parse_store_id(store_id if store_id is not None else DEFAULT_STORE_ID)
 
-    fda_wallet = Wallets.query.filter_by(type="fee_deposit", fda_key=fda_key).first()
+    if store_id in local_fda_by_store:
+        return local_fda_by_store[store_id]
+
+    fda_wallet = Wallets.query.filter_by(
+        type="fee_deposit", store_id=store_id
+    ).first()
     if fda_wallet:
         return fda_wallet.pub_address
     return default_fda
 
 
 @celery.task()
-def make_multipayout(symbol, payout_list, fee, from_account=None, fda_key=None):
+def make_multipayout(symbol, payout_list, fee, from_account=None, store_id=None):
     logger.warning(f"Start multipayout {symbol} - {payout_list}")
     if symbol == COIN:
         coint_inst = Coin(symbol)
         payout_results = coint_inst.make_multipayout_eth(
-            payout_list, fee, from_account=from_account, fda_key=fda_key
+            payout_list, fee, from_account=from_account, store_id=store_id
         )
         post_payout_results.delay(payout_results, symbol)
         return payout_results
     elif symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
         token_inst = Token(symbol)
         payout_results = token_inst.make_token_multipayout(
-            payout_list, fee, from_account=from_account, fda_key=fda_key
+            payout_list, fee, from_account=from_account, store_id=store_id
         )
         post_payout_results.delay(payout_results, symbol)
         return payout_results
@@ -223,9 +240,9 @@ def drain_account(self, symbol, account):
         return False
 
     logger.warning(f"Start draining from account {account} crypto {symbol}")
-    destination = fda_service.get_sweep_target(account)
+    destination = fda_service.get_drain_destination(account)
     if account == destination:
-        logger.warning("Account is already its sweep target, skip draining %s", account)
+        logger.warning("Account is already its drain destination, skip draining %s", account)
         return False
     if symbol == COIN:
         inst = Coin(symbol)
@@ -237,16 +254,6 @@ def drain_account(self, symbol, account):
         raise Exception("Symbol is not in config")
 
     return results
-
-
-@celery.task(bind=True)
-@skip_if_running
-def create_fee_deposit_account(self, fda_key=None):
-    from .services import fda as fda_service
-
-    logger.warning("Creating fee-deposit account for key %s", fda_key)
-    address = fda_service.create_fda(fda_key)
-    return address
 
 
 def _sweep_native(
@@ -434,12 +441,14 @@ def sweep_foreign_chains(self):
         from .services import fda as fda_service
         from .models import Wallets
 
-        local_fda_by_key = {
-            w.fda_key or fda_service.DEFAULT_FDA_KEY: w.pub_address
+        local_fda_by_store = {
+            w.store_id: w.pub_address
             for w in Wallets.query.filter_by(type="fee_deposit").all()
         }
-        default_fda = coin_inst.get_fee_deposit_account()
-        local_fda_by_key.setdefault(fda_service.DEFAULT_FDA_KEY, default_fda)
+        default_fda = coin_inst.get_fee_deposit_account(
+            store_id=fda_service.DEFAULT_STORE_ID
+        )
+        local_fda_by_store.setdefault(fda_service.DEFAULT_STORE_ID, default_fda)
 
         fda_priv_by_addr = {}
         if not dry_run:
@@ -521,7 +530,7 @@ def sweep_foreign_chains(self):
 
                 chain_summary["checked"] += 1
                 destination = _resolve_foreign_sweep_destination(
-                    wallet, local_fda_by_key, default_fda
+                    wallet, local_fda_by_store, default_fda
                 )
                 fee_deposit_priv_key = None
                 if not dry_run and destination:

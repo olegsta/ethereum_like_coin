@@ -1,5 +1,8 @@
 from celery import Celery
 from flask import Flask
+import threading
+
+import flask_migrate
 
 # import flask_sqlalchemy
 
@@ -7,6 +10,8 @@ from flask import Flask
 from . import events  # noqa: F401
 from .config import config
 from .db_import import db
+
+migrate = flask_migrate.Migrate()
 
 
 celery = Celery(
@@ -18,6 +23,9 @@ celery = Celery(
     result_serializer="pickle",
     result_accept_content=["pickle"],
 )
+
+_db_bootstrapped = False
+_db_bootstrap_lock = threading.Lock()
 
 
 def create_app():
@@ -40,10 +48,15 @@ def create_app():
     app.register_blueprint(metrics_blueprint)
 
     db.init_app(app)
+    migrate.init_app(app, db)
     with app.app_context():
-        db.create_all()
-        from .schema import ensure_schema
+        from . import models  # noqa: F401
 
-        ensure_schema()
+        global _db_bootstrapped
+        with _db_bootstrap_lock:
+            if not _db_bootstrapped:
+                db.create_all()
+                flask_migrate.upgrade()
+                _db_bootstrapped = True
 
     return app

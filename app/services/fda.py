@@ -1,71 +1,62 @@
-import time
-
 from sqlalchemy.exc import IntegrityError
 
 from ..encryption import Encryption
 from ..logging import logger
 from ..models import Accounts, Wallets, db
 
-DEFAULT_FDA_KEY = "default"
+DEFAULT_STORE_ID = 1
 
 
-def _normalize_fda_key(fda_key):
-    if not fda_key:
-        return DEFAULT_FDA_KEY
-    return str(fda_key).strip()
+def parse_store_id(value):
+    if value is None:
+        return DEFAULT_STORE_ID
+    if isinstance(value, bool):
+        raise ValueError(f"Invalid store_id {value!r}")
+    if isinstance(value, int):
+        if value <= 0:
+            raise ValueError(f"Invalid store_id {value!r}")
+        return value
+    raw = str(value).strip()
+    if not raw or raw.lower() in ("default", "none", "null"):
+        return DEFAULT_STORE_ID
+    try:
+        store_id = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid store_id {value!r}") from exc
+    if store_id <= 0:
+        raise ValueError(f"Invalid store_id {value!r}")
+    return store_id
 
 
-def _fda_wallet_query(fda_key):
-    fda_key = _normalize_fda_key(fda_key)
-    return Wallets.query.filter_by(type="fee_deposit", fda_key=fda_key).order_by(
-        Wallets.id.asc()
+def _store_wallet_query(store_id):
+    store_id = parse_store_id(store_id)
+    return (
+        Wallets.query.filter_by(type="fee_deposit", store_id=store_id)
+        .order_by(Wallets.id.asc())
     )
 
 
-def _legacy_fda_wallet():
-    return Wallets.query.filter_by(type="fee_deposit").filter(
-        (Wallets.fda_key == None) | (Wallets.fda_key == DEFAULT_FDA_KEY)  # noqa: E711
-    ).order_by(Wallets.id.asc())
-
-
-def get_fda_address(fda_key=None, account=None):
+def get_fda_address(store_id=None, account=None):
     if account:
+        # A concrete FDA address identifies the store. Do not coerce a missing
+        # store_id to 1 — that rejects merchant FDAs during payout/balance.
+        resolve_account_store_id(store_id=store_id, fee_deposit_account=account)
         return account
 
-    fda_key = _normalize_fda_key(fda_key)
-    wallet = _fda_wallet_query(fda_key).first()
-    if not wallet and fda_key == DEFAULT_FDA_KEY:
-        wallet = _legacy_fda_wallet().first()
+    store_id = parse_store_id(store_id)
+    wallet = _store_wallet_query(store_id).first()
+    if wallet:
+        return wallet.pub_address
 
-    if not wallet:
-        from ..tasks import create_fee_deposit_account
-
-        create_fee_deposit_account.delay(fda_key)
-        time.sleep(10)
-        wallet = _fda_wallet_query(fda_key).first()
-        if not wallet and fda_key == DEFAULT_FDA_KEY:
-            wallet = _legacy_fda_wallet().first()
-
-    if not wallet:
-        raise ValueError(f"Fee-deposit account not found for key {fda_key!r}")
-
-    return wallet.pub_address
+    raise ValueError(f"Fee-deposit account not found for store_id={store_id!r}")
 
 
-def create_fda(fda_key):
-    """Create or return existing fee-deposit wallet for fda_key (idempotent)."""
-    fda_key = _normalize_fda_key(fda_key)
-    existing = _fda_wallet_query(fda_key).first()
+def create_fda(store_id=None):
+    """Create or return existing fee-deposit wallet for store_id (idempotent)."""
+    store_id = parse_store_id(store_id)
+    existing = _store_wallet_query(store_id).first()
     if existing:
         return existing.pub_address
-
-    if fda_key == DEFAULT_FDA_KEY:
-        legacy = _legacy_fda_wallet().first()
-        if legacy:
-            if not legacy.fda_key:
-                legacy.fda_key = DEFAULT_FDA_KEY
-                db.session.commit()
-            return legacy.pub_address
 
     from ..config import config
     from ..token import make_provider
@@ -75,14 +66,16 @@ def create_fda(fda_key):
     crypto_str = config["COIN_SYMBOL"]
     e = Encryption
 
-    logger.warning("Creating fee-deposit account for key %s: %s", fda_key, acc.address)
+    logger.warning(
+        "Creating fee-deposit account for store_id=%s: %s", store_id, acc.address
+    )
     try:
         db.session.add(
             Wallets(
                 pub_address=acc.address,
                 priv_key=e.encrypt(acc.key.hex()),
                 type="fee_deposit",
-                fda_key=fda_key,
+                store_id=store_id,
             )
         )
         db.session.add(
@@ -91,68 +84,63 @@ def create_fda(fda_key):
                 crypto=crypto_str,
                 amount=0,
                 type="fee_deposit",
-                fda_key=fda_key,
+                store_id=store_id,
             )
         )
         db.session.commit()
     except IntegrityError:
-        # Concurrent create for the same fda_key — keep the winner.
+        # Concurrent create for the same store_id — keep the winner.
         db.session.rollback()
-        existing = _fda_wallet_query(fda_key).first()
+        existing = _store_wallet_query(store_id).first()
         if existing:
             logger.warning(
-                "Concurrent FDA create for key %s; reusing %s",
-                fda_key,
+                "Concurrent FDA create for store_id=%s; reusing %s",
+                store_id,
                 existing.pub_address,
             )
             return existing.pub_address
         raise
 
-    logger.info("Created fee-deposit account %s for key %s", acc.address, fda_key)
+    logger.info(
+        "Created fee-deposit account %s for store_id=%s", acc.address, store_id
+    )
     return acc.address
 
 
-def resolve_fda_key_for_address(address):
-    if not address:
-        return None
-    wallet = Wallets.query.filter_by(
-        pub_address=address, type="fee_deposit"
-    ).first()
-    return wallet.fda_key if wallet else None
+def resolve_account_store_id(store_id=None, fee_deposit_account=None):
+    """Resolve store_id from request and/or a known fee-deposit address."""
+    requested = parse_store_id(store_id) if store_id is not None else None
+    if fee_deposit_account:
+        wallet = Wallets.query.filter_by(
+            pub_address=fee_deposit_account, type="fee_deposit"
+        ).first()
+        if not wallet:
+            raise ValueError(
+                f"fee_deposit_account {fee_deposit_account!r} is not a known fee-deposit wallet"
+            )
+        wallet_store_id = parse_store_id(wallet.store_id)
+        if store_id is not None and str(store_id).strip() != "":
+            if requested != wallet_store_id:
+                raise ValueError(
+                    f"store_id {requested!r} does not match fee_deposit_account "
+                    f"{fee_deposit_account!r} (expected {wallet_store_id!r})"
+                )
+            return requested
+        return wallet_store_id
+    return requested if requested is not None else DEFAULT_STORE_ID
 
 
-def get_sweep_target(customer_address):
+def get_drain_destination(customer_address):
+    """Resolve where to sweep funds from a customer/invoice address (via store_id)."""
     if customer_address and Wallets.query.filter_by(
         pub_address=customer_address, type="fee_deposit"
     ).first():
         return customer_address
 
     row = Accounts.query.filter_by(address=customer_address).first()
-    if row and row.sweep_target:
-        return row.sweep_target
-    if row and getattr(row, "fda_key", None):
-        return get_fda_address(fda_key=row.fda_key)
-    return get_fda_address()
-
-
-def set_account_sweep_target(address, sweep_target, crypto, fda_key=None):
-    row = Accounts.query.filter_by(address=address, crypto=crypto).first()
-    resolved_key = fda_key or resolve_fda_key_for_address(sweep_target)
-    if row:
-        row.sweep_target = sweep_target
-        if resolved_key:
-            row.fda_key = resolved_key
-    else:
-        row = Accounts(
-            address=address,
-            crypto=crypto,
-            amount=0,
-            sweep_target=sweep_target,
-            fda_key=resolved_key,
-        )
-        db.session.add(row)
-    db.session.commit()
-    return row
+    if row is not None:
+        return get_fda_address(store_id=row.store_id)
+    return get_fda_address(store_id=DEFAULT_STORE_ID)
 
 
 def request_json_field(*names):
@@ -160,40 +148,40 @@ def request_json_field(*names):
 
     data = request.get_json(silent=True) or {}
     for name in names:
+        if name not in data:
+            continue
         value = data.get(name)
-        if value:
-            return value
+        if value is None or value == "":
+            continue
+        return value
     return None
 
 
-def wallet_in_scope(wallet, fda_key=None, sweep_target=None):
-    if not fda_key and not sweep_target:
+def preload_accounts_by_address():
+    return {row.address: row for row in Accounts.query.all()}
+
+
+def _same_store(left, right):
+    return parse_store_id(left) == parse_store_id(right)
+
+
+def wallet_in_scope(wallet, store_id=None, accounts_by_address=None, scoped=False):
+    if not scoped:
         return True
-    normalized_key = _normalize_fda_key(fda_key) if fda_key else None
+    target = parse_store_id(store_id)
     if wallet.type == "fee_deposit":
-        return bool(normalized_key and wallet.fda_key == normalized_key)
-    if wallet.type == "regular" and sweep_target:
-        row = Accounts.query.filter_by(address=wallet.pub_address).first()
-        return bool(row and row.sweep_target == sweep_target)
-    if wallet.type == "regular" and normalized_key:
-        row = Accounts.query.filter_by(address=wallet.pub_address).first()
-        return bool(row and row.fda_key == normalized_key)
+        return _same_store(wallet.store_id, target)
+
+    if wallet.type == "regular":
+        if accounts_by_address is not None:
+            row = accounts_by_address.get(wallet.pub_address)
+        else:
+            row = Accounts.query.filter_by(address=wallet.pub_address).first()
+        return bool(row and _same_store(row.store_id, target))
     return False
 
 
-def account_in_scope(account, fda_key=None, sweep_target=None):
-    if not fda_key and not sweep_target:
+def account_in_scope(account, store_id=None, scoped=False):
+    if not scoped:
         return True
-    normalized_key = _normalize_fda_key(fda_key) if fda_key else None
-    if account.type == "fee_deposit":
-        if getattr(account, "fda_key", None):
-            return bool(normalized_key and account.fda_key == normalized_key)
-        wallet = Wallets.query.filter_by(
-            pub_address=account.address, type="fee_deposit"
-        ).first()
-        return bool(wallet and normalized_key and wallet.fda_key == normalized_key)
-    if sweep_target and account.sweep_target == sweep_target:
-        return True
-    if normalized_key and getattr(account, "fda_key", None) == normalized_key:
-        return True
-    return False
+    return _same_store(getattr(account, "store_id", None), store_id)
