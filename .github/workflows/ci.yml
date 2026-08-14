@@ -23,4 +23,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: olegprin/ethereum_like_coin:26
+          tags: olegprin/ethereum_like_coin:28
