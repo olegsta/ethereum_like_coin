@@ -7,8 +7,10 @@ from ..models import Accounts, Wallets, db
 DEFAULT_STORE_ID = 1
 
 
-def parse_store_id(value):
+def parse_store_id(value, required=False):
     if value is None:
+        if required:
+            raise ValueError("store_id is required")
         return DEFAULT_STORE_ID
     if isinstance(value, bool):
         raise ValueError(f"Invalid store_id {value!r}")
@@ -17,7 +19,11 @@ def parse_store_id(value):
             raise ValueError(f"Invalid store_id {value!r}")
         return value
     raw = str(value).strip()
-    if not raw or raw.lower() in ("default", "none", "null"):
+    if not raw:
+        if required:
+            raise ValueError("store_id is required")
+        return DEFAULT_STORE_ID
+    if raw.lower() == "default":
         return DEFAULT_STORE_ID
     try:
         store_id = int(raw)
@@ -36,13 +42,7 @@ def _store_wallet_query(store_id):
     )
 
 
-def get_fda_address(store_id=None, account=None):
-    if account:
-        # A concrete FDA address identifies the store. Do not coerce a missing
-        # store_id to 1 — that rejects merchant FDAs during payout/balance.
-        resolve_account_store_id(store_id=store_id, fee_deposit_account=account)
-        return account
-
+def get_fda_address(store_id=None):
     store_id = parse_store_id(store_id)
     wallet = _store_wallet_query(store_id).first()
     if wallet:
@@ -53,7 +53,7 @@ def get_fda_address(store_id=None, account=None):
 
 def create_fda(store_id=None):
     """Create or return existing fee-deposit wallet for store_id (idempotent)."""
-    store_id = parse_store_id(store_id)
+    store_id = parse_store_id(store_id, required=True)
     existing = _store_wallet_query(store_id).first()
     if existing:
         return existing.pub_address
@@ -107,29 +107,6 @@ def create_fda(store_id=None):
     return acc.address
 
 
-def resolve_account_store_id(store_id=None, fee_deposit_account=None):
-    """Resolve store_id from request and/or a known fee-deposit address."""
-    requested = parse_store_id(store_id) if store_id is not None else None
-    if fee_deposit_account:
-        wallet = Wallets.query.filter_by(
-            pub_address=fee_deposit_account, type="fee_deposit"
-        ).first()
-        if not wallet:
-            raise ValueError(
-                f"fee_deposit_account {fee_deposit_account!r} is not a known fee-deposit wallet"
-            )
-        wallet_store_id = parse_store_id(wallet.store_id)
-        if store_id is not None and str(store_id).strip() != "":
-            if requested != wallet_store_id:
-                raise ValueError(
-                    f"store_id {requested!r} does not match fee_deposit_account "
-                    f"{fee_deposit_account!r} (expected {wallet_store_id!r})"
-                )
-            return requested
-        return wallet_store_id
-    return requested if requested is not None else DEFAULT_STORE_ID
-
-
 def get_drain_destination(customer_address):
     """Resolve where to sweep funds from a customer/invoice address (via store_id)."""
     if customer_address and Wallets.query.filter_by(
@@ -138,31 +115,38 @@ def get_drain_destination(customer_address):
         return customer_address
 
     row = Accounts.query.filter_by(address=customer_address).first()
-    if row is not None:
-        return get_fda_address(store_id=row.store_id)
-    return get_fda_address(store_id=DEFAULT_STORE_ID)
+    if row is None:
+        raise ValueError(
+            f"Cannot resolve drain destination for {customer_address!r}: "
+            "account not found"
+        )
+    if row.store_id is None:
+        raise ValueError(
+            f"Cannot resolve drain destination for {customer_address!r}: "
+            "store_id is missing"
+        )
+    return get_fda_address(store_id=row.store_id)
 
 
-def request_json_field(*names):
-    from flask import request
-
-    data = request.get_json(silent=True) or {}
-    for name in names:
-        if name not in data:
-            continue
-        value = data.get(name)
-        if value is None or value == "":
-            continue
-        return value
-    return None
+def preload_accounts_by_address(store_id=None):
+    query = Accounts.query
+    if store_id is not None:
+        query = query.filter_by(store_id=parse_store_id(store_id))
+    return {row.address: row for row in query.all()}
 
 
-def preload_accounts_by_address():
-    return {row.address: row for row in Accounts.query.all()}
+def _row_store_id(value):
+    """store_id on a DB row. None is unscoped, not store 1."""
+    if value is None:
+        return None
+    return parse_store_id(value)
 
 
-def _same_store(left, right):
-    return parse_store_id(left) == parse_store_id(right)
+def _same_store(row_store_id, target_store_id):
+    row_sid = _row_store_id(row_store_id)
+    if row_sid is None:
+        return False
+    return row_sid == parse_store_id(target_store_id)
 
 
 def wallet_in_scope(wallet, store_id=None, accounts_by_address=None, scoped=False):

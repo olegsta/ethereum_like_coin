@@ -24,6 +24,26 @@ def test_parse_store_id():
     assert parse_store_id("default") == 1
     assert parse_store_id(2) == 2
     assert parse_store_id("7") == 7
+    try:
+        parse_store_id(None, required=True)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "required" in str(exc)
+    try:
+        parse_store_id("none")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "Invalid store_id" in str(exc)
+    try:
+        parse_store_id("null")
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "Invalid store_id" in str(exc)
+    try:
+        parse_store_id("", required=True)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "required" in str(exc)
 
 
 def test_wallet_in_scope_without_filters():
@@ -56,6 +76,59 @@ def test_default_store_is_one():
     assert wallet_in_scope(wallet, store_id=2, scoped=True) is False
 
 
+def test_unset_row_store_id_is_not_store_one():
+    wallet = _Wallet("0xorphan", "fee_deposit", store_id=None)
+    assert wallet_in_scope(wallet, store_id=1, scoped=True) is False
+    assert wallet_in_scope(wallet, store_id=None, scoped=True) is False
+    account = _Account("0xinv")
+    assert account_in_scope(account, store_id=1, scoped=True) is False
+    assert account_in_scope(account, store_id=None, scoped=True) is False
+
+
+def test_get_drain_destination_requires_account_store_id():
+    from unittest.mock import MagicMock, patch
+
+    from app.services.fda import get_drain_destination
+
+    with patch("app.services.fda.Wallets") as wallets, patch(
+        "app.services.fda.Accounts"
+    ) as accounts:
+        wallets.query.filter_by.return_value.first.return_value = None
+        accounts.query.filter_by.return_value.first.return_value = None
+        try:
+            get_drain_destination("0xUnknown")
+            assert False, "expected ValueError"
+        except ValueError as exc:
+            assert "account not found" in str(exc)
+
+        row = MagicMock()
+        row.store_id = None
+        accounts.query.filter_by.return_value.first.return_value = row
+        try:
+            get_drain_destination("0xNoStore")
+            assert False, "expected ValueError"
+        except ValueError as exc:
+            assert "store_id is missing" in str(exc)
+
+
+def test_get_drain_destination_uses_account_store_id():
+    from unittest.mock import MagicMock, patch
+
+    from app.services import fda as fda_mod
+
+    row = MagicMock()
+    row.store_id = 7
+    with patch.object(fda_mod, "Wallets") as wallets, patch.object(
+        fda_mod, "Accounts"
+    ) as accounts, patch.object(
+        fda_mod, "get_fda_address", return_value="0xStore7Fda"
+    ) as get_fda:
+        wallets.query.filter_by.return_value.first.return_value = None
+        accounts.query.filter_by.return_value.first.return_value = row
+        assert fda_mod.get_drain_destination("0xInvoice") == "0xStore7Fda"
+        get_fda.assert_called_once_with(store_id=7)
+
+
 def test_get_drain_destination_keeps_fee_deposit_as_itself():
     from unittest.mock import MagicMock, patch
 
@@ -81,6 +154,16 @@ def test_create_fda_returns_existing_without_recreate():
     with patch("app.services.fda._store_wallet_query") as query:
         query.return_value.first.return_value = existing
         assert create_fda(7) == "0xCanonicalFda"
+
+
+def test_create_fda_requires_store_id():
+    from app.services.fda import create_fda
+
+    try:
+        create_fda(None)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "required" in str(exc)
 
 
 def test_create_fda_integrity_error_reuses_winner():
@@ -132,66 +215,3 @@ def test_get_fda_address_does_not_create_by_default():
         except ValueError as exc:
             assert "not found" in str(exc)
         create.assert_not_called()
-
-
-def test_get_fda_address_rejects_non_fda_from_account():
-    from unittest.mock import MagicMock, patch
-
-    from app.services import fda as fda_mod
-
-    wallet = MagicMock()
-    wallet.type = "regular"
-    wallet.store_id = 1
-
-    with patch.object(fda_mod, "Wallets") as wallets:
-        wallets.query.filter_by.return_value.first.return_value = None
-        try:
-            fda_mod.get_fda_address(store_id=1, account="0xRegular")
-            assert False, "expected ValueError"
-        except ValueError as exc:
-            assert "fee-deposit" in str(exc)
-
-
-def test_get_fda_address_infers_store_from_account_when_store_id_omitted():
-    from unittest.mock import MagicMock, patch
-
-    from app.services import fda as fda_mod
-
-    wallet = MagicMock()
-    wallet.store_id = 3
-
-    with patch.object(fda_mod, "Wallets") as wallets:
-        wallets.query.filter_by.return_value.first.return_value = wallet
-        assert fda_mod.get_fda_address(account="0xMerchantFda") == "0xMerchantFda"
-
-
-def test_resolve_account_store_id_infers_from_fda_when_store_id_missing():
-    from unittest.mock import MagicMock, patch
-
-    from app.services import fda as fda_mod
-
-    wallet = MagicMock()
-    wallet.store_id = 3
-
-    with patch.object(fda_mod, "Wallets") as wallets:
-        wallets.query.filter_by.return_value.first.return_value = wallet
-        assert (
-            fda_mod.resolve_account_store_id(fee_deposit_account="0xMerchantFda") == 3
-        )
-
-
-def test_get_fda_address_rejects_cross_store_from_account():
-    from unittest.mock import MagicMock, patch
-
-    from app.services import fda as fda_mod
-
-    wallet = MagicMock()
-    wallet.store_id = 2
-
-    with patch.object(fda_mod, "Wallets") as wallets:
-        wallets.query.filter_by.return_value.first.return_value = wallet
-        try:
-            fda_mod.get_fda_address(store_id=1, account="0xOtherStoreFda")
-            assert False, "expected ValueError"
-        except ValueError as exc:
-            assert "store_id" in str(exc)

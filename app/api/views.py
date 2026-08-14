@@ -15,42 +15,21 @@ w3 = make_provider()
 w3l = Web3()
 
 
-def _payout_source():
-    return fda_service.request_json_field("from_account", "account") or None
-
-
 def _json():
     return request.get_json(silent=True) or {}
 
 
-def _request_store_id(from_account=None):
-    data = _json()
-    explicit = data["store_id"] if "store_id" in data else None
-    return fda_service.resolve_account_store_id(
-        store_id=explicit,
-        fee_deposit_account=from_account,
-    )
+def _request_store_id(*, required=False):
+    return fda_service.parse_store_id(_json().get("store_id"), required=required)
 
 
 @api.post("/generate-address")
 def generate_new_address():
-    fee_deposit_account = fda_service.request_json_field("fee_deposit_account")
-    data = _json()
     try:
-        store_id = fda_service.resolve_account_store_id(
-            store_id=data.get("store_id") if "store_id" in data else None,
-            fee_deposit_account=fee_deposit_account,
-        )
-        fda_service.get_fda_address(
-            store_id=store_id, account=fee_deposit_account
-        )
+        store_id = _request_store_id(required=True)
+        fda_service.get_fda_address(store_id=store_id)
     except ValueError as exc:
         return {"status": "error", "msg": str(exc)}, 400
-    except Exception as exc:
-        return {
-            "status": "error",
-            "msg": f"fee_deposit_account is required: {exc}",
-        }, 400
 
     acc = w3l.eth.account.create()
     crypto_str = str(g.symbol)
@@ -89,7 +68,7 @@ def create_fee_deposit_account():
             "msg": "store_id is required to create a fee-deposit account",
         }, 400
     try:
-        store_id = fda_service.parse_store_id(data.get("store_id"))
+        store_id = fda_service.parse_store_id(data.get("store_id"), required=True)
     except ValueError as exc:
         return {"status": "error", "msg": str(exc)}, 400
     address = fda_service.create_fda(store_id)
@@ -103,19 +82,16 @@ def create_fee_deposit_account():
 @api.post("/balance")
 def get_balance():
     crypto_str = str(g.symbol)
-    from_account = _payout_source()
     try:
-        store_id = _request_store_id(from_account)
+        store_id = _request_store_id()
         if crypto_str == config["COIN_SYMBOL"]:
             inst = Coin(config["COIN_SYMBOL"])
-            balance = inst.get_fee_deposit_coin_balance(
-                account=from_account, store_id=store_id
-            )
+            balance = inst.get_fee_deposit_coin_balance(store_id=store_id)
         else:
             if crypto_str in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
                 token_instance = Token(crypto_str)
                 balance = token_instance.get_fee_deposit_token_balance(
-                    account=from_account, store_id=store_id
+                    store_id=store_id
                 )
             else:
                 return {"status": "error", "msg": "token is not defined in config"}
@@ -150,29 +126,24 @@ def dump():
 
 @api.post("/fee-deposit-account")
 def get_fee_deposit_account():
-    from_account = _payout_source()
     try:
-        store_id = _request_store_id(from_account)
+        store_id = _request_store_id()
         if g.symbol == config["COIN_SYMBOL"]:
             coin_instance = Coin(g.symbol)
-            account = coin_instance.get_fee_deposit_account(
-                store_id=store_id, account=from_account
-            )
+            account = coin_instance.get_fee_deposit_account(store_id=store_id)
             return {
                 "account": account,
                 "balance": coin_instance.get_fee_deposit_coin_balance(
-                    account=account, store_id=store_id
+                    store_id=store_id
                 ),
             }
         elif g.symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
             token_instance = Token(g.symbol)
-            account = token_instance.get_fee_deposit_account(
-                store_id=store_id, account=from_account
-            )
+            account = token_instance.get_fee_deposit_account(store_id=store_id)
             return {
                 "account": account,
                 "balance": token_instance.get_fee_deposit_account_balance(
-                    account=account, store_id=store_id
+                    store_id=store_id
                 ),
             }
         else:

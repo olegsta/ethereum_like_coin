@@ -74,10 +74,10 @@ def _get_foreign_wallets(db_name):
     return rows
 
 
-def _resolve_foreign_sweep_destination(wallet, local_fda_by_store, default_fda):
+def _resolve_foreign_sweep_destination(wallet, local_fda_by_store):
     """Pick the FDA destination for a foreign-chain wallet on the current chain."""
     from .models import Wallets, Accounts
-    from .services.fda import DEFAULT_STORE_ID, parse_store_id
+    from .services.fda import parse_store_id
 
     account = wallet["pub_address"]
     if wallet.get("type") == "fee_deposit":
@@ -93,7 +93,13 @@ def _resolve_foreign_sweep_destination(wallet, local_fda_by_store, default_fda):
 
     if store_id is None:
         store_id = wallet.get("store_id")
-    store_id = parse_store_id(store_id if store_id is not None else DEFAULT_STORE_ID)
+    if store_id is None:
+        return None
+
+    try:
+        store_id = parse_store_id(store_id)
+    except ValueError:
+        return None
 
     if store_id in local_fda_by_store:
         return local_fda_by_store[store_id]
@@ -103,28 +109,33 @@ def _resolve_foreign_sweep_destination(wallet, local_fda_by_store, default_fda):
     ).first()
     if fda_wallet:
         return fda_wallet.pub_address
-    return default_fda
+    return None
 
 
 @celery.task()
-def make_multipayout(symbol, payout_list, fee, from_account=None, store_id=None):
+def make_multipayout(symbol, payout_list, fee, store_id=None):
     logger.warning(f"Start multipayout {symbol} - {payout_list}")
+    tokens = config["TOKENS"][config["CURRENT_NETWORK"]]
+    if symbol != COIN and symbol not in tokens:
+        return [{"status": "error", "msg": "Symbol is not in config"}]
+
+    from .services.fda import parse_store_id
+
+    store_id = parse_store_id(store_id, required=True)
     if symbol == COIN:
         coint_inst = Coin(symbol)
         payout_results = coint_inst.make_multipayout_eth(
-            payout_list, fee, from_account=from_account, store_id=store_id
+            payout_list, fee, store_id=store_id
         )
         post_payout_results.delay(payout_results, symbol)
         return payout_results
-    elif symbol in config["TOKENS"][config["CURRENT_NETWORK"]].keys():
-        token_inst = Token(symbol)
-        payout_results = token_inst.make_token_multipayout(
-            payout_list, fee, from_account=from_account, store_id=store_id
-        )
-        post_payout_results.delay(payout_results, symbol)
-        return payout_results
-    else:
-        return [{"status": "error", "msg": "Symbol is not in config"}]
+
+    token_inst = Token(symbol)
+    payout_results = token_inst.make_token_multipayout(
+        payout_list, fee, store_id=store_id
+    )
+    post_payout_results.delay(payout_results, symbol)
+    return payout_results
 
 
 @celery.task()
@@ -240,7 +251,11 @@ def drain_account(self, symbol, account):
         return False
 
     logger.warning(f"Start draining from account {account} crypto {symbol}")
-    destination = fda_service.get_drain_destination(account)
+    try:
+        destination = fda_service.get_drain_destination(account)
+    except ValueError as exc:
+        logger.warning("Skipping drain of %s: %s", account, exc)
+        return False
     if account == destination:
         logger.warning("Account is already its drain destination, skip draining %s", account)
         return False
@@ -444,10 +459,15 @@ def sweep_foreign_chains(self):
         local_fda_by_store = {
             w.store_id: w.pub_address
             for w in Wallets.query.filter_by(type="fee_deposit").all()
+            if w.store_id is not None
         }
-        default_fda = coin_inst.get_fee_deposit_account(
-            store_id=fda_service.DEFAULT_STORE_ID
-        )
+        try:
+            default_fda = coin_inst.get_fee_deposit_account(
+                store_id=fda_service.DEFAULT_STORE_ID
+            )
+        except ValueError as exc:
+            logger.warning("[SWEEP] Skipping sweep: %s", exc)
+            return
         local_fda_by_store.setdefault(fda_service.DEFAULT_STORE_ID, default_fda)
 
         fda_priv_by_addr = {}
@@ -530,8 +550,13 @@ def sweep_foreign_chains(self):
 
                 chain_summary["checked"] += 1
                 destination = _resolve_foreign_sweep_destination(
-                    wallet, local_fda_by_store, default_fda
+                    wallet, local_fda_by_store
                 )
+                if not destination:
+                    logger.warning(
+                        f"[SWEEP][{chain_coin}] {account}: cannot resolve FDA "
+                        "from store_id, skipping sweeps"
+                    )
                 fee_deposit_priv_key = None
                 if not dry_run and destination:
                     fee_deposit_priv_key = fda_priv_by_addr.get(destination.lower())
@@ -588,7 +613,7 @@ def sweep_foreign_chains(self):
                             f"holds {token_balance} {token_sym} on current chain "
                             f"(dest={destination})"
                         )
-                        if not dry_run:
+                        if not dry_run and destination:
                             if checksum_addr == w3.to_checksum_address(destination):
                                 logger.warning(
                                     f"[SWEEP][{chain_coin}] {checksum_addr} is already "
@@ -627,7 +652,7 @@ def sweep_foreign_chains(self):
 
                 # --- Native sweep (after tokens, so gas is not prematurely drained) ---
                 if native_balance >= decimal.Decimal(config["MIN_TRANSFER_THRESHOLD"]):
-                    if not dry_run:
+                    if not dry_run and destination:
                         if checksum_addr == w3.to_checksum_address(destination):
                             logger.warning(
                                 f"[SWEEP][{chain_coin}] {checksum_addr} is already "

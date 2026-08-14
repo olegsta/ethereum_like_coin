@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.tasks import make_multipayout
 
 
@@ -12,11 +14,13 @@ class TestMakeMultipayout:
         post_payout_results.delay = MagicMock()
 
         result = make_multipayout.run(
-            "ETH", [{"dest": "0x0", "amount": 1}], "0.001", None, None
+            "ETH", [{"dest": "0x0", "amount": 1}], "0.001", store_id=1
         )
 
         coin_cls.assert_called_once_with("ETH")
-        coin_instance.make_multipayout_eth.assert_called_once()
+        coin_instance.make_multipayout_eth.assert_called_once_with(
+            [{"dest": "0x0", "amount": 1}], "0.001", store_id=1
+        )
         post_payout_results.delay.assert_called_once_with(
             [{"status": "success"}], "ETH"
         )
@@ -30,13 +34,19 @@ class TestMakeMultipayout:
         post_payout_results.delay = MagicMock()
 
         result = make_multipayout.run(
-            "ETH-USDT", [{"dest": "0x0", "amount": 1}], "0.001", None, None
+            "ETH-USDT", [{"dest": "0x0", "amount": 1}], "0.001", store_id=2
         )
 
         token_cls.assert_called_once_with("ETH-USDT")
-        token_instance.make_token_multipayout.assert_called_once()
+        token_instance.make_token_multipayout.assert_called_once_with(
+            [{"dest": "0x0", "amount": 1}], "0.001", store_id=2
+        )
         assert result == [{"status": "ok"}]
 
     def test_unknown_symbol_returns_error(self):
         result = make_multipayout.run("UNKNOWN", [], "0.001")
         assert result == [{"status": "error", "msg": "Symbol is not in config"}]
+
+    def test_missing_store_id_raises(self):
+        with pytest.raises(ValueError, match="required"):
+            make_multipayout.run("ETH", [{"dest": "0x0", "amount": 1}], "0.001")

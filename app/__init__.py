@@ -7,9 +7,12 @@ import flask_migrate
 # import flask_sqlalchemy
 
 
+from sqlalchemy import text
+
 from . import events  # noqa: F401
 from .config import config
 from .db_import import db
+from .logging import logger
 
 migrate = flask_migrate.Migrate()
 
@@ -26,6 +29,24 @@ celery = Celery(
 
 _db_bootstrapped = False
 _db_bootstrap_lock = threading.Lock()
+
+
+def _upgrade_schema():
+    lock_name = f"{config['COIN_SYMBOL'].lower()}_schema_upgrade"
+    acquired = db.session.execute(
+        text("SELECT GET_LOCK(:name, :timeout)"),
+        {"name": lock_name, "timeout": 60},
+    ).scalar()
+    if acquired != 1:
+        logger.warning(
+            "Could not acquire DB upgrade lock %s; skipping flask_migrate.upgrade()",
+            lock_name,
+        )
+        return
+    try:
+        flask_migrate.upgrade()
+    finally:
+        db.session.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name})
 
 
 def create_app():
@@ -56,7 +77,7 @@ def create_app():
         with _db_bootstrap_lock:
             if not _db_bootstrapped:
                 db.create_all()
-                flask_migrate.upgrade()
+                _upgrade_schema()
                 _db_bootstrapped = True
 
     return app

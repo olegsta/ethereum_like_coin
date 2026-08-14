@@ -113,14 +113,14 @@ class Coin:
                 "config['MAX_PRIORITY_FEE_MODE'] is incorrect, can be only 'static' or 'dynamic'"
             )
 
-    def get_transaction_price(self, account=None, store_id=None):
+    def get_transaction_price(self, store_id=None):
         gas_price = self.provider.eth.gas_price
         fee = self.get_max_priority_fee()
         multiplier = Decimal(
             config["MULTIPLIER"]
         )  # make max fee per gas as *MULTIPLIER of base price + fee
         max_fee_per_gas = self.provider.from_wei(gas_price, "ether") + Decimal(fee)
-        fda = self.get_fee_deposit_account(store_id=store_id, account=account)
+        fda = self.get_fee_deposit_account(store_id=store_id)
         eth_transaction = {
             "from": self.provider.to_checksum_address(fda),
             "to": self.provider.to_checksum_address(fda),
@@ -137,13 +137,11 @@ class Coin:
         price = eth_gas_count * max_fee_per_gas
         return price
 
-    def get_fee_deposit_account(self, store_id=None, account=None):
-        return fda_service.get_fda_address(store_id=store_id, account=account)
+    def get_fee_deposit_account(self, store_id=None):
+        return fda_service.get_fda_address(store_id=store_id)
 
-    def get_fee_deposit_coin_balance(self, account=None, store_id=None):
-        deposit_account = self.get_fee_deposit_account(
-            store_id=store_id, account=account
-        )
+    def get_fee_deposit_coin_balance(self, store_id=None):
+        deposit_account = self.get_fee_deposit_account(store_id=store_id)
         amount = Decimal(
             self.provider.from_wei(
                 self.provider.eth.get_balance(deposit_account), "ether"
@@ -172,19 +170,11 @@ class Coin:
                     balances.update({account.address: Decimal(account.amount)})
             return balances
 
-    def make_multipayout_eth(
-        self,
-        payout_list,
-        fee,
-        from_account=None,
-        store_id=None,
-    ):
+    def make_multipayout_eth(self, payout_list, fee, store_id=None):
         payout_results = []
         payout_list = payout_list
         fee = Decimal(fee)
-        payout_account = self.get_fee_deposit_account(
-            store_id=store_id, account=from_account
-        )
+        payout_account = self.get_fee_deposit_account(store_id=store_id)
 
         for payout in payout_list:
             if not self.provider.is_address(payout["dest"]):
@@ -227,9 +217,7 @@ class Coin:
         should_pay = should_pay + len(payout_list) * (
             (max_fee_per_gas * gas_count) + l1_fee
         )
-        have_crypto = self.get_fee_deposit_coin_balance(
-            account=payout_account, store_id=store_id
-        )
+        have_crypto = self.get_fee_deposit_coin_balance(store_id=store_id)
         if have_crypto < should_pay:
             raise Exception(
                 f"Have not enough crypto on fee account, need {should_pay} have {have_crypto}"
@@ -405,7 +393,9 @@ class Coin:
             break
         accounts_by_address = None
         if scoped:
-            accounts_by_address = fda_service.preload_accounts_by_address()
+            accounts_by_address = fda_service.preload_accounts_by_address(
+                store_id=store_id
+            )
         for wallet in pd:
             if not fda_service.wallet_in_scope(
                 wallet,
@@ -615,8 +605,8 @@ class Token:
                     list_accounts.append(account.address)
             return list_accounts
 
-    def get_coin_transaction_fee(self, account=None, store_id=None):
-        address = self.get_fee_deposit_account(store_id=store_id, account=account)
+    def get_coin_transaction_fee(self, store_id=None):
+        address = self.get_fee_deposit_account(store_id=store_id)
         fee = self.get_max_priority_fee()
         gas = self.contract.functions.transfer(
             address,
@@ -636,20 +626,18 @@ class Token:
     def check_eth_address(self, address):
         return self.provider.is_address(address)
 
-    def get_fee_deposit_account(self, store_id=None, account=None):
-        return fda_service.get_fda_address(store_id=store_id, account=account)
+    def get_fee_deposit_account(self, store_id=None):
+        return fda_service.get_fda_address(store_id=store_id)
 
-    def get_fee_deposit_account_balance(self, account=None, store_id=None):
-        address = self.get_fee_deposit_account(store_id=store_id, account=account)
+    def get_fee_deposit_account_balance(self, store_id=None):
+        address = self.get_fee_deposit_account(store_id=store_id)
         amount = Decimal(
             self.provider.from_wei(self.provider.eth.get_balance(address), "ether")
         )
         return amount
 
-    def get_fee_deposit_token_balance(self, account=None, store_id=None):
-        deposit_account = self.get_fee_deposit_account(
-            store_id=store_id, account=account
-        )
+    def get_fee_deposit_token_balance(self, store_id=None):
+        deposit_account = self.get_fee_deposit_account(store_id=store_id)
         code = self.provider.eth.get_code(self.contract_address)
         if not code or code == b"\x00" or code.hex() in ("0x", "0x0"):
             raise ValueError(
@@ -670,19 +658,11 @@ class Token:
             ) from exc
         return balance / Decimal(10**decimals)
 
-    def make_token_multipayout(
-        self,
-        payout_list,
-        fee,
-        from_account=None,
-        store_id=None,
-    ):
+    def make_token_multipayout(self, payout_list, fee, store_id=None):
         payout_results = []
         payout_list = payout_list
         fee = Decimal(fee)
-        payout_account = self.get_fee_deposit_account(
-            store_id=store_id, account=from_account
-        )
+        payout_account = self.get_fee_deposit_account(store_id=store_id)
 
         if len(payout_list) == 0:
             raise Exception("Payout list cannot be empty")
@@ -703,9 +683,7 @@ class Token:
                 payout["dest"] = self.provider.to_checksum_address(payout["dest"])
                 logger.warning(f"Changed to {payout['dest']} which is checksum address")
 
-        have_tokens = self.get_fee_deposit_token_balance(
-            account=payout_account, store_id=store_id
-        )
+        have_tokens = self.get_fee_deposit_token_balance(store_id=store_id)
         if need_tokens > have_tokens:
             raise Exception(
                 f"Have not enough tokens on fee account, need {need_tokens} have {have_tokens}"
@@ -737,9 +715,7 @@ class Token:
         need_crypto_for_multipayout = need_crypto * len(
             payout_list
         )  # approximate сalc just for checking
-        have_crypto = self.get_fee_deposit_account_balance(
-            account=payout_account, store_id=store_id
-        )
+        have_crypto = self.get_fee_deposit_account_balance(store_id=store_id)
         if need_crypto_for_multipayout > have_crypto:
             raise Exception(
                 f"Have not enough crypto on fee account, need {need_crypto_for_multipayout} have {have_crypto}"

@@ -3,11 +3,11 @@ import os
 
 os.environ.setdefault("WALLET", "ETH")
 
-from flask.cli import FlaskGroup
-from flask_migrate import Migrate
+from flask.cli import FlaskGroup  # noqa: E402
+from flask_migrate import Migrate  # noqa: E402
 
-from app import create_app
-from app.db_import import db
+from app import create_app  # noqa: E402
+from app.db_import import db  # noqa: E402
 
 app = create_app()
 migrate = Migrate(app, db)

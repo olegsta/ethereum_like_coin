@@ -90,37 +90,27 @@ def upgrade():
         op.add_column("wallets", sa.Column("store_id", sa.Integer(), nullable=True))
 
     bind = op.get_bind()
-    default_store_id = bind.execute(
-        sa.text(
-            """
-            SELECT COALESCE(
-                (SELECT store_id
-                 FROM wallets
-                 WHERE type = 'fee_deposit' AND store_id IS NOT NULL
-                 ORDER BY id ASC
-                 LIMIT 1),
-                (SELECT store_id
-                 FROM accounts
-                 WHERE store_id IS NOT NULL
-                 ORDER BY id ASC
-                 LIMIT 1),
-                :legacy_default
-            ) AS sid
-            """
-        ),
-        {"legacy_default": LEGACY_DEFAULT_STORE_ID},
-    ).scalar()
-
+    # New column: existing invoice accounts and the current FDA belong to store 1.
     bind.execute(
         sa.text("UPDATE accounts SET store_id = :sid WHERE store_id IS NULL"),
-        {"sid": int(default_store_id)},
+        {"sid": LEGACY_DEFAULT_STORE_ID},
     )
     bind.execute(
         sa.text(
-            "UPDATE wallets SET store_id = :sid "
-            "WHERE store_id IS NULL AND type = 'fee_deposit'"
+            """
+            UPDATE wallets
+            SET store_id = :sid
+            WHERE id = (
+                SELECT id FROM (
+                    SELECT id FROM wallets
+                    WHERE type = 'fee_deposit' AND store_id IS NULL
+                    ORDER BY id ASC
+                    LIMIT 1
+                ) AS canonical
+            )
+            """
         ),
-        {"sid": int(default_store_id)},
+        {"sid": LEGACY_DEFAULT_STORE_ID},
     )
 
     if not _index_exists("wallets", INDEX_NAME):
