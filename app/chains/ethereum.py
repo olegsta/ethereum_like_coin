@@ -3,10 +3,10 @@ COIN = "ETH"
 WALLET_ALIASES = ()
 CHAIN_NAME = "ethereum"
 
-DB_NAME = "ethereum-shkeeper"
+DB_NAME = "ethereum-shkeeper-test"
 # testnet
-# FULLNODE_URL = 'https://eth-sepolia-testnet.api.pocket.network'
-FULLNODE_URL = "http://ethereum:8545"
+FULLNODE_URL = 'https://eth-sepolia-testnet.api.pocket.network'
+# FULLNODE_URL = "http://ethereum:8545"
 
 ENV = {
     "network": (
