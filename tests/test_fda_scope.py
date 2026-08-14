@@ -200,18 +200,14 @@ def test_create_fda_integrity_error_reuses_winner():
         rollback.assert_called()
 
 
-def test_get_fda_address_does_not_create_by_default():
+def test_get_fda_address_creates_when_missing():
     from unittest.mock import patch
 
     from app.services import fda as fda_mod
 
     with patch.object(fda_mod, "_store_wallet_query") as query, patch.object(
-        fda_mod, "create_fda"
+        fda_mod, "create_fda", return_value="0xNewFda"
     ) as create:
         query.return_value.first.return_value = None
-        try:
-            fda_mod.get_fda_address(store_id=2)
-            assert False, "expected ValueError"
-        except ValueError as exc:
-            assert "not found" in str(exc)
-        create.assert_not_called()
+        assert fda_mod.get_fda_address(store_id=2) == "0xNewFda"
+        create.assert_called_once_with(2)
