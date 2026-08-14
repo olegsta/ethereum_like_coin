@@ -37,9 +37,16 @@ def _fetch_password_from_shkeeper():
             return False
         if runtime_status == "success":
             return r.get("key")
-        logger.warning(f"Receive unexpected response from shkeeper: {resp.text}")
+        logger.warning(
+            "Unexpected decrypt status: persistent_status='enabled', runtime_status=%r",
+            runtime_status,
+        )
         return False
-    logger.warning(f"Receive unexpected response from shkeeper: {resp.text}")
+    logger.warning(
+        "Unexpected decrypt status: persistent_status=%r, runtime_status=%r",
+        r.get("persistent_status"),
+        r.get("runtime_status"),
+    )
     return False
 
 

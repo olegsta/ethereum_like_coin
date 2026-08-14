@@ -11,7 +11,7 @@ from app.db_import import db  # noqa: E402
 
 app = create_app()
 migrate = Migrate(app, db)
-cli = FlaskGroup(app)
+cli = FlaskGroup(create_app=create_app)
 
 if __name__ == "__main__":
     cli()
