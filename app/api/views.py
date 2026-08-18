@@ -42,6 +42,7 @@ def generate_new_address():
                 pub_address=acc.address,
                 priv_key=e.encrypt(acc.key.hex()),
                 type="regular",
+                store_id=store_id,
             )
         )
         db.session.add(
@@ -49,7 +50,6 @@ def generate_new_address():
                 address=acc.address,
                 crypto=crypto_str,
                 amount=0,
-                store_id=store_id,
             )
         )
         db.session.commit()

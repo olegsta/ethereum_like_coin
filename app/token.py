@@ -67,11 +67,15 @@ def get_all_accounts(store_id=None, scoped=False):
                     "There was exception during query to the database, try again later"
                 )
         break
+    wallets_by_address = (
+        fda_service.preload_wallets_by_address() if scoped else None
+    )
     for account in all_account_list:
         if fda_service.account_in_scope(
             account,
             store_id=store_id,
             scoped=scoped,
+            wallets_by_address=wallets_by_address,
         ):
             account_list.append(account.address)
     return account_list
@@ -391,16 +395,10 @@ class Coin:
                         "There was exception during query to the database, try again later"
                     )
             break
-        accounts_by_address = None
-        if scoped:
-            accounts_by_address = fda_service.preload_accounts_by_address(
-                store_id=store_id
-            )
         for wallet in pd:
             if not fda_service.wallet_in_scope(
                 wallet,
                 store_id=store_id,
-                accounts_by_address=accounts_by_address,
                 scoped=scoped,
             ):
                 continue
