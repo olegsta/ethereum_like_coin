@@ -21,7 +21,7 @@ w3 = make_provider()
 
 
 def _get_foreign_wallets(db_name):
-    """Return wallets from a foreign chain DB, enriched with accounts.store_id."""
+    """Return wallets from a foreign chain DB. Owner is wallets.store_id."""
     engine = create_engine(
         f"mariadb+pymysql://root:shkeeper@mariadb/{db_name}?charset=utf8mb4"
     )
@@ -54,21 +54,6 @@ def _get_foreign_wallets(db_name):
                     }
                     for r in result
                 ]
-
-            # Regular wallets store store_id on accounts, not wallets.
-            try:
-                result = conn.execute(
-                    text(
-                        "SELECT address, store_id FROM accounts "
-                        "WHERE store_id IS NOT NULL"
-                    )
-                )
-                addr_to_store = {r[0]: r[1] for r in result}
-                for wallet in rows:
-                    if wallet.get("store_id") is None:
-                        wallet["store_id"] = addr_to_store.get(wallet["pub_address"])
-            except Exception:
-                pass
     finally:
         engine.dispose()
     return rows
@@ -76,13 +61,13 @@ def _get_foreign_wallets(db_name):
 
 def _resolve_foreign_sweep_destination(wallet, local_fda_by_store):
     """Pick this chain's FDA for a foreign-chain wallet (including foreign FDAs)."""
-    from .models import Wallets, Accounts
+    from .models import Wallets
     from .services.fda import parse_store_id
 
     store_id = wallet.get("store_id")
     if store_id is None:
         try:
-            row = Accounts.query.filter_by(address=wallet["pub_address"]).first()
+            row = Wallets.query.filter_by(pub_address=wallet["pub_address"]).first()
             if row is not None:
                 store_id = row.store_id
         except Exception:
