@@ -20,7 +20,6 @@ class Accounts(db.Model):
     )
     status = db.Column(db.String(10))
     type = db.Column(db.String(30))
-    store_id = db.Column(db.Integer)
     __table_args__ = (db.UniqueConstraint("id"),)
 
 
@@ -35,10 +34,9 @@ class Wallets(db.Model):
     )
     status = db.Column(db.String(10))
     type = db.Column(db.String(30))
-    # Only fee_deposit rows set store_id; regular wallets keep NULL.
+    # Source of truth for key ownership. One key belongs to one store.
     store_id = db.Column(db.Integer)
     __table_args__ = (
         db.UniqueConstraint("id"),
-        # Only fee_deposit rows set store_id; NULL is allowed for regular wallets.
-        db.Index("uq_wallets_fee_deposit_store_id", "store_id", unique=True),
+        db.Index("uq_wallets_pub_address", "pub_address", unique=True),
     )

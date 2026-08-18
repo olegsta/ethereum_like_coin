@@ -26,7 +26,8 @@ def _request_store_id(*, required=False):
 @api.post("/generate-address")
 def generate_new_address():
     try:
-        store_id = _request_store_id(required=True)
+        # Missing store_id → store 1
+        store_id = _request_store_id()
         fda_service.get_fda_address(store_id=store_id)
     except ValueError as exc:
         return {"status": "error", "msg": str(exc)}, 400
@@ -41,6 +42,7 @@ def generate_new_address():
                 pub_address=acc.address,
                 priv_key=e.encrypt(acc.key.hex()),
                 type="regular",
+                store_id=store_id,
             )
         )
         db.session.add(
@@ -48,7 +50,6 @@ def generate_new_address():
                 address=acc.address,
                 crypto=crypto_str,
                 amount=0,
-                store_id=store_id,
             )
         )
         db.session.commit()

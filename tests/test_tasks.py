@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from app.tasks import make_multipayout
 
 
@@ -47,6 +45,15 @@ class TestMakeMultipayout:
         result = make_multipayout.run("UNKNOWN", [], "0.001")
         assert result == [{"status": "error", "msg": "Symbol is not in config"}]
 
-    def test_missing_store_id_raises(self):
-        with pytest.raises(ValueError, match="required"):
-            make_multipayout.run("ETH", [{"dest": "0x0", "amount": 1}], "0.001")
+    @patch("app.tasks.post_payout_results")
+    @patch("app.tasks.Coin")
+    def test_missing_store_id_defaults_to_store_one(self, coin_cls, post_payout_results):
+        coin_instance = coin_cls.return_value
+        coin_instance.make_multipayout_eth.return_value = [{"status": "success"}]
+        post_payout_results.delay = MagicMock()
+
+        make_multipayout.run("ETH", [{"dest": "0x0", "amount": 1}], "0.001")
+
+        coin_instance.make_multipayout_eth.assert_called_once_with(
+            [{"dest": "0x0", "amount": 1}], "0.001", store_id=1
+        )
