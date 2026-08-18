@@ -43,6 +43,10 @@ def _index_exists(table, index_name):
 def upgrade():
     bind = op.get_bind()
 
+    # Drop unique(store_id) first: regular wallets must share store_id with the FDA.
+    if _index_exists("wallets", FDA_INDEX):
+        op.drop_index(FDA_INDEX, table_name="wallets")
+
     if _table_exists("wallets") and _table_exists("accounts"):
         bind.execute(
             sa.text(
@@ -63,9 +67,6 @@ def upgrade():
             sa.text("UPDATE wallets SET store_id = :sid WHERE store_id IS NULL"),
             {"sid": LEGACY_DEFAULT_STORE_ID},
         )
-
-    if _index_exists("wallets", FDA_INDEX):
-        op.drop_index(FDA_INDEX, table_name="wallets")
 
     if _table_exists("wallets") and not _column_exists("wallets", FDA_STORE_COL):
         bind.execute(
