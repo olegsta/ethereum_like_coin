@@ -86,7 +86,6 @@ def create_fda(store_id=None):
                 crypto=crypto_str,
                 amount=0,
                 type="fee_deposit",
-                store_id=store_id,
             )
         )
         db.session.commit()
@@ -110,31 +109,25 @@ def create_fda(store_id=None):
 
 
 def get_drain_destination(customer_address):
-    """Resolve where to sweep funds from a customer/invoice address (via store_id)."""
-    if customer_address and Wallets.query.filter_by(
-        pub_address=customer_address, type="fee_deposit"
-    ).first():
-        return customer_address
-
-    row = Accounts.query.filter_by(address=customer_address).first()
-    if row is None:
+    """Resolve where to sweep funds from a customer/invoice address (via wallet.store_id)."""
+    wallet = Wallets.query.filter_by(pub_address=customer_address).first()
+    if wallet is None:
         raise ValueError(
             f"Cannot resolve drain destination for {customer_address!r}: "
-            "account not found"
+            "wallet not found"
         )
-    if row.store_id is None:
+    if wallet.type == "fee_deposit":
+        return customer_address
+    if wallet.store_id is None:
         raise ValueError(
             f"Cannot resolve drain destination for {customer_address!r}: "
             "store_id is missing"
         )
-    return get_fda_address(store_id=row.store_id)
+    return get_fda_address(store_id=wallet.store_id)
 
 
-def preload_accounts_by_address(store_id=None):
-    query = Accounts.query
-    if store_id is not None:
-        query = query.filter_by(store_id=parse_store_id(store_id))
-    return {row.address: row for row in query.all()}
+def preload_wallets_by_address():
+    return {row.pub_address: row for row in Wallets.query.all()}
 
 
 def _row_store_id(value):
@@ -151,23 +144,17 @@ def _same_store(row_store_id, target_store_id):
     return row_sid == parse_store_id(target_store_id)
 
 
-def wallet_in_scope(wallet, store_id=None, accounts_by_address=None, scoped=False):
+def wallet_in_scope(wallet, store_id=None, scoped=False):
     if not scoped:
         return True
-    target = parse_store_id(store_id)
-    if wallet.type == "fee_deposit":
-        return _same_store(wallet.store_id, target)
-
-    if wallet.type == "regular":
-        if accounts_by_address is not None:
-            row = accounts_by_address.get(wallet.pub_address)
-        else:
-            row = Accounts.query.filter_by(address=wallet.pub_address).first()
-        return bool(row and _same_store(row.store_id, target))
-    return False
+    return _same_store(wallet.store_id, store_id)
 
 
-def account_in_scope(account, store_id=None, scoped=False):
+def account_in_scope(account, store_id=None, scoped=False, wallets_by_address=None):
     if not scoped:
         return True
-    return _same_store(getattr(account, "store_id", None), store_id)
+    if wallets_by_address is not None:
+        wallet = wallets_by_address.get(account.address)
+    else:
+        wallet = Wallets.query.filter_by(pub_address=account.address).first()
+    return bool(wallet and _same_store(wallet.store_id, store_id))
