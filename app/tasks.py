@@ -115,7 +115,7 @@ def make_multipayout(symbol, payout_list, fee, store_id=None):
 
     from .services.fda import parse_store_id
 
-    store_id = parse_store_id(store_id, required=True)
+    store_id = parse_store_id(store_id)
     if symbol == COIN:
         coint_inst = Coin(symbol)
         payout_results = coint_inst.make_multipayout_eth(
