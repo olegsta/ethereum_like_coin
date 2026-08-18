@@ -15,7 +15,9 @@ branch_labels = None
 depends_on = None
 
 LEGACY_DEFAULT_STORE_ID = 1
-INDEX_NAME = "uq_wallets_fee_deposit_store_id"
+FDA_INDEX = "uq_wallets_fee_deposit_store_id"
+PUB_INDEX = "uq_wallets_pub_address"
+FDA_TYPE_COL = "fda_type"
 
 
 def _inspector():
@@ -39,6 +41,8 @@ def _index_exists(table, index_name):
 
 
 def upgrade():
+    bind = op.get_bind()
+
     if not _table_exists("settings"):
         op.create_table(
             "settings",
@@ -64,7 +68,6 @@ def upgrade():
             sa.Column("last_update", sa.DateTime(), nullable=True),
             sa.Column("status", sa.String(length=10), nullable=True),
             sa.Column("type", sa.String(length=30), nullable=True),
-            sa.Column("store_id", sa.Integer(), nullable=True),
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("id"),
         )
@@ -83,46 +86,55 @@ def upgrade():
             sa.UniqueConstraint("id"),
         )
 
-    if not _column_exists("accounts", "store_id"):
-        op.add_column("accounts", sa.Column("store_id", sa.Integer(), nullable=True))
-
     if not _column_exists("wallets", "store_id"):
         op.add_column("wallets", sa.Column("store_id", sa.Integer(), nullable=True))
 
-    bind = op.get_bind()
-    # New column: existing invoice accounts and the current FDA belong to store 1.
     bind.execute(
-        sa.text("UPDATE accounts SET store_id = :sid WHERE store_id IS NULL"),
+        sa.text("UPDATE wallets SET store_id = :sid WHERE store_id IS NULL"),
         {"sid": LEGACY_DEFAULT_STORE_ID},
     )
+
+    if not _column_exists("wallets", FDA_TYPE_COL):
+        bind.execute(
+            sa.text(
+                """
+                ALTER TABLE wallets
+                ADD COLUMN fda_type VARCHAR(30) GENERATED ALWAYS AS (
+                    CASE WHEN `type` = 'fee_deposit' THEN `type` ELSE NULL END
+                ) VIRTUAL
+                """
+            )
+        )
+
+    if not _index_exists("wallets", FDA_INDEX):
+        op.create_index(
+            FDA_INDEX, "wallets", ["store_id", FDA_TYPE_COL], unique=True
+        )
+
     bind.execute(
         sa.text(
             """
-            UPDATE wallets
-            SET store_id = :sid
-            WHERE id = (
-                SELECT id FROM (
-                    SELECT id FROM wallets
-                    WHERE type = 'fee_deposit' AND store_id IS NULL
-                    ORDER BY id ASC
-                    LIMIT 1
-                ) AS canonical
-            )
+            DELETE w1 FROM wallets w1
+            INNER JOIN wallets w2
+              ON w1.pub_address = w2.pub_address AND w1.id > w2.id
+            WHERE w1.pub_address IS NOT NULL
             """
-        ),
-        {"sid": LEGACY_DEFAULT_STORE_ID},
+        )
     )
 
-    if not _index_exists("wallets", INDEX_NAME):
-        op.create_index(INDEX_NAME, "wallets", ["store_id"], unique=True)
+    if not _index_exists("wallets", PUB_INDEX):
+        op.create_index(PUB_INDEX, "wallets", ["pub_address"], unique=True)
 
 
 def downgrade():
-    if _index_exists("wallets", INDEX_NAME):
-        op.drop_index(INDEX_NAME, table_name="wallets")
+    if _index_exists("wallets", PUB_INDEX):
+        op.drop_index(PUB_INDEX, table_name="wallets")
+
+    if _index_exists("wallets", FDA_INDEX):
+        op.drop_index(FDA_INDEX, table_name="wallets")
+
+    if _column_exists("wallets", FDA_TYPE_COL):
+        op.drop_column("wallets", FDA_TYPE_COL)
 
     if _column_exists("wallets", "store_id"):
         op.drop_column("wallets", "store_id")
-
-    if _column_exists("accounts", "store_id"):
-        op.drop_column("accounts", "store_id")
