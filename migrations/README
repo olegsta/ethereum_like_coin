@@ -1,0 +1,9 @@
+Generic single-database configuration for Flask-Migrate / Alembic.
+
+Create a new migration:
+
+    flask --app manage.py db migrate -m "description"
+
+Apply migrations:
+
+    flask --app manage.py db upgrade

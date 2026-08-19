@@ -1,12 +1,20 @@
 from celery import Celery
 from flask import Flask
+import threading
+
+import flask_migrate
 
 # import flask_sqlalchemy
 
 
+from sqlalchemy import text
+
 from . import events  # noqa: F401
 from .config import config
 from .db_import import db
+from .logging import logger
+
+migrate = flask_migrate.Migrate()
 
 
 celery = Celery(
@@ -18,6 +26,27 @@ celery = Celery(
     result_serializer="pickle",
     result_accept_content=["pickle"],
 )
+
+_db_bootstrapped = False
+_db_bootstrap_lock = threading.Lock()
+
+
+def _upgrade_schema():
+    lock_name = f"{config['COIN_SYMBOL'].lower()}_schema_upgrade"
+    acquired = db.session.execute(
+        text("SELECT GET_LOCK(:name, :timeout)"),
+        {"name": lock_name, "timeout": 60},
+    ).scalar()
+    if acquired != 1:
+        logger.warning(
+            "Could not acquire DB upgrade lock %s; skipping flask_migrate.upgrade()",
+            lock_name,
+        )
+        return
+    try:
+        flask_migrate.upgrade()
+    finally:
+        db.session.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name})
 
 
 def create_app():
@@ -40,7 +69,15 @@ def create_app():
     app.register_blueprint(metrics_blueprint)
 
     db.init_app(app)
+    migrate.init_app(app, db)
     with app.app_context():
-        db.create_all()
+        from . import models  # noqa: F401
+
+        global _db_bootstrapped
+        with _db_bootstrap_lock:
+            if not _db_bootstrapped:
+                db.create_all()
+                _upgrade_schema()
+                _db_bootstrapped = True
 
     return app

@@ -67,6 +67,7 @@ config = {
         "SQLALCHEMY_DATABASE_URI",
         default=f"mariadb+pymysql://root:shkeeper@mariadb/{_chain.DB_NAME}?charset=utf8mb4",
     ),
+    "SQLALCHEMY_TRACK_MODIFICATIONS": False,
     "UPDATE_TOKEN_BALANCES_EVERY_SECONDS": int(
         os.environ.get("UPDATE_TOKEN_BALANCES_EVERY_SECONDS", 3600)
     ),
@@ -128,6 +129,8 @@ config = {
     "FORCE_ADD_WALLETS_TO_DB": os.environ.get("FORCE_ADD_WALLETS_TO_DB", "False"),
     "L1_GAS_PRICE_ORACLE": getattr(_chain, "L1_GAS_PRICE_ORACLE", None),
     "USE_POA_MIDDLEWARE": getattr(_chain, "USE_POA_MIDDLEWARE", False),
+    # When True, Celery tasks run inline (.delay → sync call) — useful for local/dev.
+    "DEVMODE_CELERY_NODELAY": _env_bool("DEVMODE_CELERY_NODELAY", default=False),
 }
 
 

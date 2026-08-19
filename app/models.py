@@ -1,3 +1,5 @@
+from sqlalchemy import Computed
+
 from .db_import import db
 
 
@@ -34,4 +36,17 @@ class Wallets(db.Model):
     )
     status = db.Column(db.String(10))
     type = db.Column(db.String(30))
-    __table_args__ = (db.UniqueConstraint("id"),)
+    # Source of truth for key ownership. One key belongs to one store.
+    store_id = db.Column(db.Integer)
+    fda_type = db.Column(
+        db.String(30),
+        Computed(
+            "CASE WHEN `type` = 'fee_deposit' THEN `type` ELSE NULL END",
+            persisted=False,
+        ),
+    )
+    __table_args__ = (
+        db.UniqueConstraint("id"),
+        db.Index("uq_wallets_pub_address", "pub_address", unique=True),
+        db.Index("uq_wallets_fee_deposit_store_id", "store_id", "fda_type", unique=True),
+    )
