@@ -275,7 +275,7 @@ class TransactionLookupService:
             )
             return {"status": "error", "msg": "txid is not found for this crypto "}
 
-        logger.warning(transactions_array)
+        logger.debug(transactions_array)
         token_decimals = token_instance.contract.functions.decimals().call()
         related_transactions = []
 

@@ -25,12 +25,12 @@ def _token_contract_addresses() -> list[str]:
 
 
 def handle_event(transaction) -> None:
-    logger.info("new transaction: %r", transaction)
+    logger.debug("new transaction: %r", transaction)
 
 
 def walletnotify_shkeeper(symbol: str, txid: str) -> bool:
     """Notify SHKeeper about a transaction."""
-    logger.warning("Notifying about %s/%s", symbol, txid)
+    logger.debug("Notifying about %s/%s", symbol, txid)
     url = f'http://{config["SHKEEPER_HOST"]}/api/v1/walletnotify/{symbol}/{txid}'
     headers = {"X-Shkeeper-Backend-Key": config["SHKEEPER_KEY"]}
 
@@ -38,7 +38,7 @@ def walletnotify_shkeeper(symbol: str, txid: str) -> bool:
         try:
             response = rq.post(url, headers=headers).json()
             if response.get("status") == "success":
-                logger.warning("Notification success %s/%s", symbol, txid)
+                logger.debug("Notification success %s/%s", symbol, txid)
                 return True
             logger.warning(
                 "Notification failed %s/%s, response: %s",
