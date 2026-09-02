@@ -1,5 +1,6 @@
 from celery import Celery
-from flask import Flask
+from celery.signals import task_prerun, task_postrun
+from flask import Flask, has_app_context
 import threading
 
 import flask_migrate
@@ -26,6 +27,34 @@ celery = Celery(
     result_serializer="pickle",
     result_accept_content=["pickle"],
 )
+
+
+def _reset_celery_db_session(**_kwargs):
+    if not has_app_context():
+        return
+    try:
+        db.session.rollback()
+    except Exception:
+        logger.warning("Failed to rollback DB session before task", exc_info=True)
+        try:
+            db.session.remove()
+        except Exception:
+            logger.warning("Failed to remove DB session before task", exc_info=True)
+
+
+def _remove_celery_db_session(**_kwargs):
+    """Close the worker Session so the next task does not reuse a dead connection."""
+    if not has_app_context():
+        return
+    try:
+        db.session.remove()
+    except Exception:
+        logger.warning("Failed to remove DB session after task", exc_info=True)
+
+
+task_prerun.connect(_reset_celery_db_session)
+task_postrun.connect(_remove_celery_db_session)
+
 
 _db_bootstrapped = False
 _db_bootstrap_lock = threading.Lock()

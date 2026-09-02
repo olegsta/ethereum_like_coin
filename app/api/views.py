@@ -114,7 +114,7 @@ def get_status():
 @api.post("/transaction/<txid>")
 def get_transaction(txid):
     result = TransactionLookupService(w3).lookup(g.symbol, txid)
-    logger.warning(result)
+    logger.debug(result)
     return result
 
 

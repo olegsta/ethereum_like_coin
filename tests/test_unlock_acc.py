@@ -1,6 +1,24 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import app.unlock_acc as unlock_acc
+
+
+@pytest.fixture(autouse=True)
+def skip_unlock_wait():
+    now = {"t": 0.0}
+
+    def fake_time():
+        return now["t"]
+
+    def fake_sleep(seconds):
+        now["t"] += seconds
+
+    with patch("app.unlock_acc.time.time", fake_time), patch(
+        "app.unlock_acc.time.sleep", fake_sleep
+    ):
+        yield
 
 
 class TestGetAccountPassword:

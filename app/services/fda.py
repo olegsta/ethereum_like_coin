@@ -1,4 +1,4 @@
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, PendingRollbackError
 
 from ..encryption import Encryption
 from ..logging import logger
@@ -42,9 +42,19 @@ def _store_wallet_query(store_id):
     )
 
 
+def _query_first(query):
+    """Recover a Flask-SQLAlchemy Session left in a failed transaction."""
+    try:
+        return query.first()
+    except PendingRollbackError:
+        logger.warning("Invalid DB transaction; rolling back and retrying query")
+        db.session.rollback()
+        return query.first()
+
+
 def get_fda_address(store_id=None):
     store_id = parse_store_id(store_id)
-    wallet = _store_wallet_query(store_id).first()
+    wallet = _query_first(_store_wallet_query(store_id))
     if wallet:
         return wallet.pub_address
 
@@ -56,7 +66,7 @@ def get_fda_address(store_id=None):
 def create_fda(store_id=None):
     """Create or return existing fee-deposit wallet for store_id (idempotent)."""
     store_id = parse_store_id(store_id, required=True)
-    existing = _store_wallet_query(store_id).first()
+    existing = _query_first(_store_wallet_query(store_id))
     if existing:
         return existing.pub_address
 
@@ -92,7 +102,7 @@ def create_fda(store_id=None):
     except IntegrityError:
         # Concurrent create for the same store_id — keep the winner.
         db.session.rollback()
-        existing = _store_wallet_query(store_id).first()
+        existing = _query_first(_store_wallet_query(store_id))
         if existing:
             logger.warning(
                 "Concurrent FDA create for store_id=%s; reusing %s",
@@ -110,7 +120,7 @@ def create_fda(store_id=None):
 
 def get_drain_destination(customer_address):
     """Resolve where to sweep funds from a customer/invoice address (via wallet.store_id)."""
-    wallet = Wallets.query.filter_by(pub_address=customer_address).first()
+    wallet = _query_first(Wallets.query.filter_by(pub_address=customer_address))
     if wallet is None:
         raise ValueError(
             f"Cannot resolve drain destination for {customer_address!r}: "
