@@ -19,14 +19,13 @@ def _json():
     return request.get_json(silent=True) or {}
 
 
-def _request_store_id(*, required=False):
+def _request_store_id(*, required=True):
     return fda_service.parse_store_id(_json().get("store_id"), required=required)
 
 
 @api.post("/generate-address")
 def generate_new_address():
     try:
-        # Missing store_id → store 1
         store_id = _request_store_id()
         fda_service.get_fda_address(store_id=store_id)
     except ValueError as exc:
@@ -98,7 +97,7 @@ def get_balance():
                 return {"status": "error", "msg": "token is not defined in config"}
     except ValueError as exc:
         logger.warning("Balance request failed for %s: %s", crypto_str, exc)
-        return {"status": "error", "msg": str(exc)}
+        return {"status": "error", "msg": str(exc)}, 400
     return {"status": "success", "balance": balance}
 
 
@@ -120,7 +119,10 @@ def get_transaction(txid):
 
 @api.post("/dump")
 def dump():
-    store_id = _request_store_id()
+    try:
+        store_id = _request_store_id()
+    except ValueError as exc:
+        return {"status": "error", "msg": str(exc)}, 400
     w = Coin(config["COIN_SYMBOL"])
     return w.get_dump(store_id=store_id, scoped=True)
 
@@ -155,5 +157,8 @@ def get_fee_deposit_account():
 
 @api.post("/get_all_addresses")
 def get_all_addresses():
-    store_id = _request_store_id()
+    try:
+        store_id = _request_store_id()
+    except ValueError as exc:
+        return {"status": "error", "msg": str(exc)}, 400
     return get_all_accounts(store_id=store_id, scoped=True)

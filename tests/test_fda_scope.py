@@ -19,12 +19,13 @@ class _Account:
 
 
 def test_parse_store_id():
-    assert parse_store_id(None) == 1
     assert parse_store_id("default") == 1
     assert parse_store_id(2) == 2
     assert parse_store_id("7") == 7
+    assert parse_store_id(None, required=False) is None
+    assert parse_store_id("", required=False) is None
     try:
-        parse_store_id(None, required=True)
+        parse_store_id(None)
         assert False, "expected ValueError"
     except ValueError as exc:
         assert "required" in str(exc)
@@ -39,7 +40,7 @@ def test_parse_store_id():
     except ValueError as exc:
         assert "Invalid store_id" in str(exc)
     try:
-        parse_store_id("", required=True)
+        parse_store_id("")
         assert False, "expected ValueError"
     except ValueError as exc:
         assert "required" in str(exc)
@@ -73,9 +74,9 @@ def test_account_in_scope_follows_wallet_store_id():
     ) is False
 
 
-def test_default_store_is_one():
+def test_scoped_none_does_not_match_store_one():
     wallet = _Wallet("0xfda", "fee_deposit", store_id=1)
-    assert wallet_in_scope(wallet, store_id=None, scoped=True) is True
+    assert wallet_in_scope(wallet, store_id=None, scoped=True) is False
     assert wallet_in_scope(wallet, store_id=1, scoped=True) is True
     assert wallet_in_scope(wallet, store_id=2, scoped=True) is False
 
@@ -212,3 +213,13 @@ def test_get_fda_address_creates_when_missing():
         query.return_value.first.return_value = None
         assert fda_mod.get_fda_address(store_id=2) == "0xNewFda"
         create.assert_called_once_with(2)
+
+
+def test_get_fda_address_requires_store_id():
+    from app.services.fda import get_fda_address
+
+    try:
+        get_fda_address(None)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "required" in str(exc)

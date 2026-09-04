@@ -69,7 +69,9 @@ class TestCalcTxFee:
         from app.api.payout import calc_tx_fee
 
         app = Flask(__name__)
-        with app.test_request_context("/ETH/calc-tx-fee/1.0", method="POST"):
+        with app.test_request_context(
+            "/ETH/calc-tx-fee/1.0", method="POST", json={"store_id": 1}
+        ):
             g.symbol = "ETH"
             with patch(
                 "app.api.payout.config",
@@ -91,7 +93,9 @@ class TestCalcTxFee:
         from app.api.payout import calc_tx_fee
 
         app = Flask(__name__)
-        with app.test_request_context("/UNKNOWN/calc-tx-fee/1.0", method="POST"):
+        with app.test_request_context(
+            "/UNKNOWN/calc-tx-fee/1.0", method="POST", json={"store_id": 1}
+        ):
             g.symbol = "UNKNOWN"
             with patch(
                 "app.api.payout.config",
@@ -104,3 +108,15 @@ class TestCalcTxFee:
                 body = calc_tx_fee(Decimal("1.0"))
 
         assert body["status"] == "error"
+
+    def test_missing_store_id_returns_error(self):
+        from app.api.payout import calc_tx_fee
+
+        app = Flask(__name__)
+        with app.test_request_context("/ETH/calc-tx-fee/1.0", method="POST"):
+            g.symbol = "ETH"
+            body, status = calc_tx_fee(Decimal("1.0"))
+
+        assert status == 400
+        assert body["status"] == "error"
+        assert "store_id is required" in body["msg"]

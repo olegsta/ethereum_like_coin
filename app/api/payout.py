@@ -28,7 +28,7 @@ def _start_multipayout(payout_list, store_id):
 def calc_tx_fee(amount):
     data = request.get_json(silent=True) or {}
     try:
-        store_id = fda_service.parse_store_id(data.get("store_id"))
+        store_id = fda_service.parse_store_id(data.get("store_id"), required=True)
     except ValueError as exc:
         return {"status": "error", "msg": str(exc)}, 400
 
@@ -82,7 +82,8 @@ def multipayout():
 
     try:
         store_id = fda_service.parse_store_id(
-            payload.get("store_id") if isinstance(payload, dict) else None
+            payload.get("store_id") if isinstance(payload, dict) else None,
+            required=True,
         )
         return _start_multipayout(payout_list, store_id)
     except ValueError as exc:
@@ -95,7 +96,7 @@ def payout(to, amount):
     try:
         return _start_multipayout(
             [{"dest": to, "amount": amount}],
-            fda_service.parse_store_id(data.get("store_id")),
+            fda_service.parse_store_id(data.get("store_id"), required=True),
         )
     except ValueError as exc:
         return {"status": "error", "msg": str(exc)}, 400

@@ -7,11 +7,11 @@ from ..models import Accounts, Wallets, db
 DEFAULT_STORE_ID = 1
 
 
-def parse_store_id(value, required=False):
+def parse_store_id(value, required=True):
     if value is None:
         if required:
             raise ValueError("store_id is required")
-        return DEFAULT_STORE_ID
+        return None
     if isinstance(value, bool):
         raise ValueError(f"Invalid store_id {value!r}")
     if isinstance(value, int):
@@ -22,7 +22,7 @@ def parse_store_id(value, required=False):
     if not raw:
         if required:
             raise ValueError("store_id is required")
-        return DEFAULT_STORE_ID
+        return None
     if raw.lower() == "default":
         return DEFAULT_STORE_ID
     try:
@@ -53,7 +53,7 @@ def _query_first(query):
 
 
 def get_fda_address(store_id=None):
-    store_id = parse_store_id(store_id)
+    store_id = parse_store_id(store_id, required=True)
     wallet = _query_first(_store_wallet_query(store_id))
     if wallet:
         return wallet.pub_address
@@ -149,7 +149,7 @@ def _row_store_id(value):
 
 def _same_store(row_store_id, target_store_id):
     row_sid = _row_store_id(row_store_id)
-    if row_sid is None:
+    if row_sid is None or target_store_id is None:
         return False
     return row_sid == parse_store_id(target_store_id)
 
